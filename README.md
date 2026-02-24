@@ -1,7 +1,9 @@
 # 📖 聖經讀經打卡
 
 一個以 LINE Bot + Google Apps Script (GAS) 製作的聖經讀經打卡應用，幫助群組成員記錄每日讀經、追蹤完成度，並查看群組統計排名。
-![一年讀經畫面](pic/demo.png)
+<p align="center">
+  <img src="pic/demo.png" alt="一年讀經畫面" width="360">
+</p>
 
 ## ✨ 功能特色
 
