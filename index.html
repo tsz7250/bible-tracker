@@ -1,0 +1,1018 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>聖經讀經打卡</title>
+    <style>
+    /* 全域變數與基底 */
+    :root { --primary: #4CAF50; --secondary: #2E7D32; --bg: #f5f7f9; --text: #333; --done: #e8f5e9; --border: #e0e0e0; --danger: #e74c3c; } 
+    body { font-family: -apple-system, "Noto Sans TC", sans-serif; background: var(--bg); margin: 0; color: var(--text); -webkit-tap-highlight-color: transparent; padding-bottom: env(safe-area-inset-bottom); } 
+    /* 頂部導航列 */
+    .header { background: white; padding: 12px 15px; display: flex; align-items: center; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); position: sticky; top: 0; z-index: 100; gap: 8px; } 
+    .user-avatar { width: 32px; height: 32px; border-radius: 50%; background: #eee; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; } 
+    .user-name { font-weight: bold; flex-grow: 1; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } 
+    .header-btn { font-size: 11px; color: #555; background: #f0f0f0; padding: 5px 8px; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; font-weight: bold; flex-shrink: 0; display: flex; align-items: center; gap: 3px; } 
+    /* 視圖容器與動畫 */
+    .view-container { display: none; width: 100%; animation: fadeIn 0.2s ease; } 
+    .view-container.active { display: block; } 
+    @keyframes fadeIn { from { opacity: 0; } 
+    to { opacity: 1; } } 
+    /* 頁籤 */
+    .tabs { display: flex; background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 56px; z-index: 90; } 
+    .tab { flex: 1; text-align: center; padding: 12px 5px; font-weight: bold; cursor: pointer; color: #888; transition: 0.2s; font-size: 14px; } 
+    .tab.active { color: var(--primary); border-bottom: 3px solid var(--primary); } 
+    /* 書卷列表 */
+    .vertical-book-list { display: flex; flex-direction: column; padding-bottom: 20px; } 
+    .book-row { display: flex; flex-direction: column; padding: 12px 15px; background: white; border-bottom: 1px solid var(--border); cursor: pointer; gap: 6px; } 
+    .book-row:active { background: #f9f9f9; } 
+    .book-row-main { display: flex; justify-content: space-between; align-items: center; width: 100%; } 
+    .book-row-left { display: flex; align-items: center; gap: 10px; } 
+    .book-row-right { display: flex; align-items: center; font-size: 13px; color: #888; } 
+    .book-number { color: #aaa; font-size: 13px; width: 20px; text-align: right; } 
+    .book-name { font-weight: bold; font-size: 15px; } 
+    .mini-progress-bg { width: 100%; height: 4px; background: #eee; border-radius: 2px; overflow: hidden; } 
+    .mini-progress-fill { height: 100%; background: var(--primary); transition: width 0.5s ease; } 
+    /* 章節選擇 */
+    .chapter-nav { display: flex; align-items: center; padding: 12px 15px; background: white; border-bottom: 1px solid var(--border); position: sticky; top: 56px; z-index: 90; } 
+    .back-btn { background: none; border: none; color: var(--primary); font-size: 15px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 4px; } 
+    .current-book-title { font-size: 16px; font-weight: bold; flex-grow: 1; text-align: center; padding-right: 40px; } 
+    .chapter-content { padding: 15px; padding-bottom: 100px; } 
+    .chapter-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; } 
+    .chapter-box { background: white; border: 1px solid var(--border); border-radius: 8px; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; } 
+    .chapter-box.already-done { background: var(--done); color: var(--secondary); border-color: var(--done); } 
+    .chapter-box.selected { background: var(--primary); color: white; border-color: var(--primary); transform: scale(0.92); } 
+    /* 一年讀經計畫 */
+    .plan-top-panel { background: #2c3e50; color: white; padding: 8px 15px; position: sticky; top: 102px; z-index: 80; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); } 
+    .plan-day-nav { font-size: 14px; font-weight: bold; margin-bottom: 6px; text-align: center; } 
+    .plan-task-row { display: flex; justify-content: space-between; align-items: center; background: #34495e; padding: 6px 10px; border-radius: 6px; margin-bottom: 4px; cursor: pointer; transition: 0.15s; border: 1.5px solid transparent; } 
+    .plan-task-row.done { background: var(--primary); opacity: 0.9; cursor: default; } 
+    .plan-task-row.selected { background: #f39c12; border-color: #f1c40f; } 
+    .pt-info { display: flex; align-items: baseline; gap: 8px; } 
+    .pt-title { font-size: 10px; color: #bdc3c7; font-weight: bold; } 
+    .pt-ref { font-size: 13px; font-weight: bold; } 
+    .pt-checkbox { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #7f8c8d; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; } 
+    .plan-task-row.done .pt-checkbox, .plan-task-row.selected .pt-checkbox { border-color: white; color: white; } 
+    .plan-save-btn { width: 100%; background: white; color: #2c3e50; border: none; padding: 6px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; margin-top: 4px; display: none; } 
+    .plan-grid-wrap { padding: 10px 12px 120px 12px; background: white; } 
+    .plan-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; } 
+    .plan-cell { aspect-ratio: 1; border: 1px solid var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; color: #777; cursor: pointer; } 
+    .plan-cell.status-1 { background: #e8f5e9; border: 1.5px solid var(--primary); color: var(--primary); } 
+    .plan-cell.status-2 { background: var(--primary); border: 1.5px solid var(--primary); color: white; } 
+    .plan-cell.active-day { outline: 2.5px solid #f39c12; outline-offset: 1px; z-index: 2; transform: scale(1.05); } 
+    /* 總進度 */
+    .progress-content { padding: 15px; } 
+    .progress-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04); border: 1px solid var(--border); } 
+    .progress-header { display: flex; justify-content: space-between; font-weight: bold; font-size: 15px; margin-bottom: 10px; } 
+    .pct-text { color: var(--primary); font-size: 16px; } 
+    .progress-bar-bg { background: #eee; height: 10px; border-radius: 5px; overflow: hidden; position: relative; } 
+    .progress-bar-fill { background: linear-gradient(90deg, #81C784, #4CAF50); height: 100%; width: 0%; transition: width 0.8s ease; } 
+    /* 清除設定 */
+    .clear-card { background: white; border-radius: 12px; margin-bottom: 15px; padding: 5px 0; overflow: hidden; border: 1px solid var(--border); } 
+    .clear-item { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid #f5f5f5; cursor: pointer; } 
+    .clear-item:last-child { border-bottom: none; } 
+    .clear-item:active { background: #fff5f5; } 
+    .clear-label { font-weight: bold; color: #444; } 
+    .clear-btn-text { color: var(--danger); font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 5px; } 
+    /* 登入畫面 */
+    .login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 999; } 
+    .login-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08); width: 85%; max-width: 320px; text-align: center; } 
+    .login-input { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; box-sizing: border-box; background: #fafafa; text-align: center; margin-bottom: 15px; } 
+    .login-btn { width: 100%; background: var(--primary); color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; } 
+    .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--primary); border-radius: 50%; width: 35px; height: 35px; animation: spin 1s linear infinite; margin: 0 auto; } 
+    @keyframes spin { 0% { transform: rotate(0deg); } 
+    100% { transform: rotate(360deg); } } 
+    /* 底部按鈕列 */
+    .footer { position: fixed; bottom: 0; width: 100%; padding: 15px 20px; background: white; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05); box-sizing: border-box; z-index: 100; padding-bottom: calc(15px + env(safe-area-inset-bottom)); } 
+    .save-btn { width: 100%; background: var(--primary); color: white; border: none; padding: 15px; border-radius: 12px; font-size: 16px; font-weight: bold; cursor: pointer; } 
+    /* 操作載入 Modal */
+    .op-loading-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.45); display: none; align-items: center; justify-content: center; z-index: 9998; } 
+    .op-loading-modal.visible { display: flex; } 
+    .op-loading-box { background: white; padding: 28px 36px; border-radius: 16px; text-align: center; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15); min-width: 160px; } 
+    .op-loading-msg { margin-top: 12px; font-size: 14px; color: #555; font-weight: bold; } 
+    /* 確認對話框 */
+    .custom-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.45); display: none; align-items: center; justify-content: center; z-index: 9999; } 
+    .custom-modal-overlay.visible { display: flex; } 
+    .custom-modal-box { background: white; border-radius: 16px; padding: 24px; width: 85%; max-width: 320px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2); text-align: center; animation: fadeIn 0.2s ease; } 
+    .custom-modal-msg { font-size: 15px; color: #333; line-height: 1.6; margin-bottom: 20px; white-space: pre-line; } 
+    .custom-modal-btns { display: flex; gap: 10px; } 
+    .custom-modal-cancel { flex: 1; padding: 11px; border: 1px solid #ddd; background: #f5f5f5; border-radius: 10px; font-size: 15px; font-weight: bold; color: #666; cursor: pointer; } 
+    .custom-modal-ok { flex: 1; padding: 11px; border: none; background: var(--primary); border-radius: 10px; font-size: 15px; font-weight: bold; color: white; cursor: pointer; } 
+    .custom-modal-ok.danger { background: var(--danger); } 
+    /* 統計頁面 */
+    .stat-card { background: white; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04); border: 1px solid var(--border); } 
+    .stat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; } 
+    .stat-name { font-weight: bold; font-size: 16px; color: #333; } 
+    .stat-tag { font-size: 11px; background: #FFF3E0; color: #E65100; padding: 3px 8px; border-radius: 20px; font-weight: bold; } 
+    .stat-progress-section { margin-bottom: 8px; } 
+    .stat-progress-label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; } 
+    .stat-progress-label span:first-child { color: #555; } 
+    .stat-progress-label span:last-child { color: var(--primary); font-weight: bold; } 
+    .stat-total { display: flex; justify-content: flex-end; font-size: 12px; color: #999; margin-top: 4px; }
+    /* 統計說明彈窗 */
+    .info-btn { background: none; border: none; width: 28px; height: 28px; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #888; flex-shrink: 0; }
+    .info-btn:active { background: #f0f0f0; }
+    .info-popup-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 9999; }
+    .info-popup-overlay.visible { display: flex; }
+    .info-popup-box { background: white; border-radius: 16px; padding: 22px; width: 90%; max-width: 380px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.2); animation: fadeIn 0.2s ease; }
+    .info-popup-title { font-size: 17px; font-weight: bold; color: #333; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .info-popup-section { margin-bottom: 12px; }
+    .info-popup-section h4 { font-size: 14px; color: var(--primary); margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+    .info-popup-section p { font-size: 13px; color: #555; line-height: 1.65; margin: 0; }
+    .info-popup-section ul { font-size: 13px; color: #555; line-height: 1.65; margin: 6px 0 0; padding-left: 18px; }
+    .info-popup-section li { margin-bottom: 4px; }
+    .info-popup-divider { border: none; border-top: 1px solid #eee; margin: 12px 0; }
+    .info-popup-close { width: 100%; padding: 11px; border: none; background: var(--primary); color: white; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 6px; }
+  </style>
+</head>
+
+<body>
+
+  <div id="login-overlay" class="login-overlay">
+    <div id="loading-spinner">
+      <div class="spinner"></div>
+      <div id="loading-msg" style="color:#666; font-size:14px; font-weight:bold; margin-top:10px;">進度同步中...</div>
+    </div>
+    <div id="login-card" class="login-card" style="display: none;">
+      <h3 style="margin-top:0; color:var(--secondary);">📖 聖經讀經打卡</h3>
+      <input type="text" id="username-input" class="login-input" placeholder="請輸入姓名/暱稱">
+      <input type="text" id="pin-input" class="login-input" placeholder="密碼 (限4位數字)" maxlength="4" inputmode="numeric">
+      <button class="login-btn" onclick="handleLogin()">進入系統</button>
+    </div>
+  </div>
+
+  <!-- 操作載入 modal（獨立於登入畫面之外，用於清除、儲存等作業） -->
+  <div id="op-loading-modal" class="op-loading-modal">
+    <div class="op-loading-box">
+      <div class="spinner"></div>
+      <div id="op-loading-msg" class="op-loading-msg">處理中...</div>
+    </div>
+  </div>
+
+  <!-- 自訂 confirm / alert modal -->
+  <div id="custom-modal" class="custom-modal-overlay">
+    <div class="custom-modal-box">
+      <div id="custom-modal-msg" class="custom-modal-msg"></div>
+      <div class="custom-modal-btns">
+        <button id="custom-modal-cancel" class="custom-modal-cancel">取消</button>
+        <button id="custom-modal-ok" class="custom-modal-ok">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <header class="header">
+    <span id="display-name" class="user-name">載入中...</span>
+    <button class="header-btn" onclick="openProgressView()">📊 進度</button>
+    <button class="header-btn" onclick="openMembersStats()">👥 統計</button>
+    <button class="header-btn" onclick="openMorePage()">⋯ 更多</button>
+  </header>
+
+  <!-- 主視圖 -->
+  <div id="view-main" class="view-container active">
+    <nav class="tabs">
+      <div id="tab-OT" class="tab active" onclick="switchTestament('OT')">舊約</div>
+      <div id="tab-NT" class="tab" onclick="switchTestament('NT')">新約</div>
+      <div id="tab-Plan" class="tab" onclick="switchTestament('Plan')">一年讀經</div>
+    </nav>
+    <div id="tab-content-books" class="vertical-book-list"></div>
+    <div id="tab-content-plan" style="display:none">
+      <div class="plan-top-panel">
+        <div class="plan-day-nav">
+          <span id="p-day-title">第 1 天</span>
+        </div>
+        <div class="plan-task-row" id="pt-ot-row" onclick="togglePlanTask('ot')">
+          <div class="pt-info"><span class="pt-title">舊約</span><span class="pt-ref" id="pt-ot-ref">...</span></div>
+          <div class="pt-checkbox" id="pt-ot-check"></div>
+        </div>
+        <div class="plan-task-row" id="pt-nt-row" onclick="togglePlanTask('nt')">
+          <div class="pt-info"><span class="pt-title">新約</span><span class="pt-ref" id="pt-nt-ref">...</span></div>
+          <div class="pt-checkbox" id="pt-nt-check"></div>
+        </div>
+        <button id="plan-save-btn" class="plan-save-btn" onclick="savePlanProgress()">儲存目前勾選</button>
+      </div>
+      <div class="plan-grid-wrap">
+        <div class="plan-grid" id="plan-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 章節網格視圖 -->
+  <div id="view-chapters" class="view-container">
+    <div class="chapter-nav"><button class="back-btn" onclick="closeToMain()">❮ 返回</button>
+      <div class="current-book-title" id="current-book-name">...</div>
+    </div>
+    <div class="chapter-content">
+      <div class="chapter-grid" id="chapter-grid"></div>
+    </div>
+    <footer class="footer"><button class="save-btn" onclick="submitNormalProgress()">儲存今日進度</button></footer>
+  </div>
+
+  <!-- 總進度視圖 -->
+  <div id="view-progress" class="view-container">
+    <div class="chapter-nav"><button class="back-btn" onclick="closeToMain()">❮ 返回</button>
+      <div class="current-book-title">我的總進度</div>
+    </div>
+    <div class="progress-content">
+      <div class="progress-card">
+        <div class="progress-header"><span>📜 舊約</span><span class="pct-text" id="pct-ot">0%</span></div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="bar-ot"></div>
+        </div>
+        <div style="font-size:12px; color:#888; text-align:right; margin-top:5px;" id="txt-ot">...</div>
+      </div>
+      <div class="progress-card">
+        <div class="progress-header"><span>📖 新約</span><span class="pct-text" id="pct-nt">0%</span></div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="bar-nt" style="background: #2196F3;"></div>
+        </div>
+        <div style="font-size:12px; color:#888; text-align:right; margin-top:5px;" id="txt-nt">...</div>
+      </div>
+      <div class="progress-card">
+        <div class="progress-header" style="margin-bottom: 12px;"><span>🗓️ 一年讀經計畫</span></div>
+        <div style="margin-bottom: 12px;">
+          <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+            <span>舊約</span><span class="pct-text" id="pct-plan-ot">0%</span>
+          </div>
+          <div class="progress-bar-bg" style="height:8px;">
+            <div class="progress-bar-fill" id="bar-plan-ot" style="background:#FF9800;"></div>
+          </div>
+          <div style="font-size:11px; color:#aaa; text-align:right; margin-top:2px;" id="txt-plan-ot">...</div>
+        </div>
+        <div>
+          <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+            <span>新約</span><span class="pct-text" id="pct-plan-nt">0%</span>
+          </div>
+          <div class="progress-bar-bg" style="height:8px;">
+            <div class="progress-bar-fill" id="bar-plan-nt" style="background:#2196F3;"></div>
+          </div>
+          <div style="font-size:11px; color:#aaa; text-align:right; margin-top:2px;" id="txt-plan-nt">...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 成員統計視圖 -->
+  <div id="view-stats" class="view-container">
+    <div class="chapter-nav"><button class="back-btn" onclick="closeToMain()">❮ 返回</button>
+      <div class="current-book-title">群組成員統計</div>
+      <button class="info-btn" onclick="toggleStatsInfo()" title="計算說明">ℹ️</button>
+    </div>
+    <div style="padding: 15px;">
+      <p style="font-size: 13px; color: #888; margin-bottom: 15px; line-height: 1.4;">📊 顯示群組成員的新舊約閱讀進度</p>
+      <div id="stats-list-container"></div>
+    </div>
+  </div>
+
+  <!-- 統計計算說明彈窗 -->
+  <div id="stats-info-popup" class="info-popup-overlay" onclick="if(event.target===this)closeStatsInfo()">
+    <div class="info-popup-box">
+      <div class="info-popup-title">
+        <span>📐 計算說明</span>
+        <button onclick="closeStatsInfo()" style="margin-left:auto; background:none; border:none; font-size:20px; color:#999; cursor:pointer; padding:0 2px; line-height:1;">✕</button>
+      </div>
+      <div class="info-popup-section">
+        <p>一年讀經打卡會自動轉換為對應的聖經章節，並與自由讀經的章節合併計算，防止重複計算。</p>
+        <p style="margin-top:8px;">因此無論使用新舊約自由讀經或一年讀經計畫，都能準確顯示各人的閱讀進度。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 更多頁面 -->
+  <div id="view-clear" class="view-container">
+    <div class="chapter-nav"><button class="back-btn" onclick="closeToMain()">❮ 返回</button>
+      <div class="current-book-title">更多</div>
+    </div>
+    <div style="padding: 20px;">
+
+      <!-- 使用說明 -->
+      <div class="clear-card">
+        <div class="clear-item" onclick="toggleGuidePopup()">
+          <span class="clear-label">📖 使用說明</span>
+          <span style="color:#888; font-size:13px;">❯</span>
+        </div>
+      </div>
+
+      <!-- 清除進度 -->
+      <p style="font-size: 13px; color: #666; margin: 15px 0 10px;">⚠️ <b>注意：</b> 清除操作將永久刪除紀錄，無法還原。</p>
+      <div class="clear-card">
+        <div class="clear-item" onclick="confirmClear('OT', '舊約')">
+          <span class="clear-label">清除舊約進度</span>
+          <span class="clear-btn-text">🗑️ 清除</span>
+        </div>
+        <div class="clear-item" onclick="confirmClear('NT', '新約')">
+          <span class="clear-label">清除新約進度</span>
+          <span class="clear-btn-text">🗑️ 清除</span>
+        </div>
+        <div class="clear-item" onclick="confirmClear('Plan', '一年讀經計畫')">
+          <span class="clear-label">清除一年讀經進度</span>
+          <span class="clear-btn-text">🗑️ 清除</span>
+        </div>
+      </div>
+
+      <div class="clear-card" style="border-color: #ffcccc;">
+        <div class="clear-item" onclick="confirmClear('All', '全部進度')">
+          <span class="clear-label" style="color: var(--danger);">清除全部進度 (重置)</span>
+          <span class="clear-btn-text">🔥 徹底清除</span>
+        </div>
+      </div>
+
+      <!-- 登出 -->
+      <div class="clear-card" style="margin-top: 15px;">
+        <div class="clear-item" onclick="handleLogout()">
+          <span class="clear-label">🚪 登出</span>
+          <span style="color:#888; font-size:13px;">❯</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 使用說明彈窗 -->
+  <div id="guide-popup" class="info-popup-overlay" onclick="if(event.target===this)closeGuidePopup()">
+    <div class="info-popup-box">
+      <div class="info-popup-title">
+        <span>📖 使用說明</span>
+        <button onclick="closeGuidePopup()" style="margin-left:auto; background:none; border:none; font-size:20px; color:#999; cursor:pointer; padding:0 2px; line-height:1;">✕</button>
+      </div>
+
+      <div class="info-popup-section">
+        <h4>📚 自由讀經</h4>
+        <p>從首頁上方選擇「舊約」或「新約」頁籤，點選書卷後勾選已讀章節，按「儲存今日進度」即可。</p>
+      </div>
+      <hr class="info-popup-divider">
+
+      <div class="info-popup-section">
+        <h4>🗓️ 一年讀經計畫</h4>
+        <p>選擇「一年讀經」頁籤，點選天數後勾選舊約/新約任務，按「儲存目前勾選」。綠色格子表示該天已完成。</p>
+      </div>
+      <hr class="info-popup-divider">
+
+      <div class="info-popup-section">
+        <h4>📊 進度與統計</h4>
+        <p>「📊 進度」查看個人新舊約與計畫完成度。「👥 統計」查看群組成員排名。兩種讀經的章節會自動合併、去重計算。</p>
+      </div>
+      <hr class="info-popup-divider">
+
+      <div class="info-popup-section">
+        <h4>🗑️ 清除進度</h4>
+        <p>在「更多」頁面可分別清除舊約、新約、一年讀經或全部進度，刪除後無法還原。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- 資料緩存與目錄 ---
+    let userId = ""; let userName = ""; let userPin = ""; let globalProgress = {};
+    let groupId = ""; // 由 URL 參數帶入，表示當前 LINE 群組
+    let currentTestament = "Plan"; let selectedBook = ""; let currentPlanDay = 1;
+    let isSavingProgress = false;
+
+    const YEAR_PLAN_DATA = ["創一1～23 / 太一1~6", "創一24～二6 / 太一7~25", "創二7～25 / 太二1～三6", "創三1～21 / 太三7～四11", "創三22～四26 / 太四12～五3", "創五1～六22 / 太五4～20", "創七1～八22 / 太五21～48", "創九1～十32 / 太六1～18", "創十一1～十二20 / 太六19～七12", "創十三1～十四24 / 太七13～29", "創十五1～十六16 / 太八1～34", "創十七1～十八33 / 太九1～17", "創十九1～二十18 / 太九18～十15", "創二一1～二二24 / 太十16～十一1", "創二三1～二四67 / 太十一2～30", "創二五1～二六35 / 太十二1～37", "創二七1～二八22 / 太十二38～50", "創二九1～三十43 / 太十三1～23", "創三一1～55 / 太十三24～52", "創三二1～三四31 / 太十三53～十四21", "創三五1～三六43 / 太十四22～36", "創三七1～三九23 / 太十五1～39", "創四十1～四一57 / 太十六1～12", "創四二1～四三34 / 太十六13～27", "創四四1～四五28 / 太十六28～十七27", "創四六1～四七31 / 太十八1～35", "創四八1～四九15 / 太十九1～26", "創四九16～五十26 / 太十九27～二十16", "出一1～二25 / 太二十17～二一11", "出三1～四31 / 太二一12~46", "出五1～六30 / 太二二1~22", "出七1～八32 / 太二二23~二三12", "出九1～十29 / 太二三13~39", "出十一1～十二14 / 太二四1~26", "出十二15～51 / 太二四27~51", "出十三1～十四31 / 太二五1~13", "出十五1～27 / 太二五14~30", "出十六1～36 / 太二五~二六13", "出十七1～十八27 / 太二六14~56", "出十九1～二十26 / 太二六57~二七26", "出二一1～二二31 / 太二七27~66", "出二三1～二四18 / 太二八1~20", "出二五1～22 / 可一1~8", "出二五23～40 / 可一9~20", "出二六1～30 / 可一21~45", "出二六31～二七19 / 可二1~28", "出二七20～二八21 / 可三1~35", "出二八22～43 / 可四1~34", "出二九1～21 / 可四35~五43", "出二九22～46 / 可六1~44", "出三十1～21 / 可六45~七30", "出三十22～三一18 / 可七31~八26", "出三二1～三三23 / 可八27~九32", "出三四1～三五35 / 可九33~十12", "出三六1～三八31 / 可十13~52", "出三九1～四十38 / 可十一1~26", "利一1～17 / 可十一27~十二37", "利二1～三17 / 可十二38~十三37", "利四1～35 / 可十四1~26", "利五1～六23 / 可十四27~52", "利六24～七38 / 可十四53~十五15", "利八1～九24 / 可十五16~47", "利十1～20 / 可十六1~20", "利十一1～十二8 / 路一1~25", "利十三1～59 / 路一26~56", "利十四1～20 / 路一57~80", "利十四21～57 / 路二1~39", "利十五1～33 / 路二40~三20", "利十六1～34 / 路三21~四13", "利十七～十八30 / 路四14~44", "利十九1～二十27 / 路五1~六11", "利二一1～二二33 / 路六12~49", "利二三1～32 / 路七1~35", "利二三33～二四23 / 路七36~八21", "利二五1～55 / 路八22~56", "利二六1～46 / 路九1~36", "利二七1～34 / 路九37~62", "民一1～二34 / 路十1~24", "民三1～四49 / 路十25~42", "民五1～六27 / 路十一1~36", "民七1～八26 / 路十一37~十二12", "民九1～十36 / 路十二13~48", "民十一1～十四45 / 路十二49~十三9", "民十五1～十六50 / 路十三10~十四14", "民十七1～十九22 / 路十四15~十五7", "民二十1～二一35 / 路十五8~32", "民二二1～二四25 / 路十六1~18", "民二五1～二七23 / 路十六19~十七19", "民二八1～三十16 / 路十七20~十八8", "民三一1～三三56 / 路十八9~43", "民三四1～三六13 / 路十九1~27", "申一1～二37 / 路十九28~二十19", "申三1～四49 / 路二十20~二一4", "申五1～七26 / 路二一5~二二6", "申八1～九29 / 路二二7~46", "申十1～十一32 / 路二二47~二三25", "申十二1～十四21 / 路二三26~二四12", "申十四22～十六17 / 路二四13~53", "申十六19～十九21 / 約一1~18", "申二十1～二二30 / 約一19~51", "申二三1～二五19 / 約二1~22", "申二六1～二七26 / 約二23~三13", "申二八1～二九29 / 約三14~36", "申三十1～三二52 / 約四1~26", "申三三1～三四12 / 約四27~54", "書一1～二24 / 約五1~30", "書三1～五15 / 約五31~六15", "書六1～八35 / 約六16~51", "書九1～十二24 / 約六52~71", "書十三1～十七18 / 約七1~24", "書十八1～二一45 / 約七25~七52", "書二二1～二四33 / 約七53~八27", "士一1～二23 / 約八28~59", "士三1～五31 / 約九1~41", "士六1～八32 / 約十1~30", "士八33～十二15 / 約十31~十一16", "士十三1～十六31 / 約十一17~57", "士十七1～十九30 / 約十二1~24", "士二十1～二一25 / 約十二25~50", "得一1～二23 / 約十三1~38", "得三1～四22 / 約十四1~6", "撒上一1～三21 / 約十四7~31", "撒上四1～六21 / 約十五1~十六4", "撒上七1～九27 / 約十六5~33", "撒上十1～十三23 / 約十七1~13", "撒上十四1～十五35 / 約十七14~24", "撒上十六1～十七58 / 約十七25~十八27", "撒上十八1～二十42 / 約十八28~十九22", "撒上二一1～二四22 / 約十九23~37", "撒上二五1～二八25 / 約十九38~二十13", "撒上二九1～三一13 / 約二十14~25", "撒下一1～二32 / 約二十26~二一14", "撒下三1～五25 / 約二一15~25", "撒下六1～七29 / 徒一1~26", "撒下八1～十一27 / 徒二1~21", "撒下十二1～十三39 / 徒二22~41", "撒下十四1～十六23 / 徒二42~三18", "撒下十七1～十九43 / 徒三19~四31", "撒下二十1～二二51 / 徒四32~五32", "撒下二三1～二四25 / 徒五33~七1", "王上一1～53 / 徒七2~八3", "王上二1～三46 / 徒八4~40", "王上四1～六38 / 徒九1~43", "王上七1～51 / 徒十1~43", "王上八1～66 / 徒十44~十一30", "王上九1～十29 / 徒十二1~十三4", "王上十一1～43 / 徒十三5~52", "王上十二1～十三34 / 徒十四1~十五11", "王上十四1～十五34 / 徒十五12~十六5", "王上十六1～十八46 / 徒十六6~40", "王上十九1～二十43 / 徒十七1~34", "王上二一1～王下一18 / 徒十八1~28", "王下二1～四44 / 徒十九1~41", "王下五1～七20 / 徒二十1~38", "王下八1～九37 / 徒二一1~26", "王下十1～十二21 / 徒二一27~二二21", "王下十三1～十五38 / 徒二二22~二三15", "王下十六1～十七41 / 徒二三16~二四27", "王下十八1～十九37 / 徒二五1~二六32", "王下二十1～二二20 / 徒二七1~44", "王下二三1～二五30 / 徒二八1~31", "代上一1～三24 / 羅一1~7", "代上四1～六81 / 羅一8~32", "代上七1～九44 / 羅二1~29", "代上十1～十二40 / 羅三1~31", "代上十三1～十六43 / 羅四1~25", "代上十七1～二十8 / 羅五1~11", "代上二一1～二三32 / 羅五12~21", "代上二四1～二六32 / 羅六1~23", "代上二七1～二九30 / 羅七1~25", "代下一1～三17 / 羅八1~6", "代下四1～六42 / 羅八7~27", "代下七1～八18 / 羅八28~39", "代下九1～31 / 羅九1~十3", "代下十1～十一23 / 羅十4~21", "代下十二1～十五19 / 羅十一1~36", "代下十六1～十九11 / 羅十二1~8", "代下二十1～二二12 / 羅十二9~十三14", "代下二三1～二六23 / 羅十四1~23", "代下二七1～二九36 / 羅十五1~24", "代下三十1～三二33 / 羅十五25~十六16", "代下三三1～三六23 / 羅十六17~27", "拉一1～二70 / 林前一1~9", "拉三1～六22 / 林前一10~31", "拉七1～八36 / 林前二1~16", "拉九1～十44 / 林前三1~13", "尼一1～二20 / 林前三14~四9", "尼三1～四23 / 林前四10~五13", "尼五1～六14 / 林前六1~16", "尼六15～八18 / 林前六17~七24", "尼九1～十39 / 林前七25~八13", "尼十一1～十二47 / 林前九1~27", "尼十三1～31 / 林前十1~13", "斯一1～三15 / 林前十14~十一6", "斯四1～七10 / 林前十一7~26", "斯八1～十3 / 林前十一27~十二11", "伯一1～三26 / 林前十二12~31", "伯四1～九35 / 林前十三1~十四12", "伯十1～十七16 / 林前十四13~33", "伯十八1～二三17 / 林前十四34~十五19", "伯二四1～三一40 / 林前十五20~34", "伯三二1～三七24 / 林前十五35~58", "伯三八1～四二17 / 林前十六1~24", "詩一1～二12 / 林後一1~14", "詩三1～七17 / 林後一15~二11", "詩八1～十18 / 林後二12~三6", "詩十一1～十六11 / 林後三7~18", "詩十七1～十九14 / 林後四1~12", "詩二十1～二二31 / 林後四13~五8", "詩二三1～二五22 / 林後五9~21", "詩二六1～三一24 / 林後六1~七7", "詩三二1～三五28 / 林後七8~八15", "詩三六1～三八22 / 林後八16~九15", "詩三九1～四一13 / 林後十1~18", "詩四二1～四四26 / 林後十一1~33", "詩四五1～17 / 林後十二1~21", "詩四六1～四九20 / 林後十三1~14", "詩五十1～五二9 / 加一1~14", "詩五三1～五八11 / 加一15~二13", "詩五九1～六四10 / 加二14~21", "詩六五1～六八35 / 加三1~14", "詩六九1～七二20 / 加三15~四7", "詩七三1～七七20 / 加四8~31", "詩七八1～八一16 / 加五1~23", "詩八二1～八七7 / 加五24~六10", "詩八八1～九一16 / 加六11~18", "詩九二1～九七12 / 弗一1~6", "詩九八1～一〇三22 / 弗一7~14", "詩一〇四1～一〇六48 / 弗一15~23", "詩一〇七1～一〇九31 / 弗二1~10", "詩一一〇1～一一五18 / 弗二11~19", "詩一一六1～一一九32 / 弗二20~三8", "詩一一九33～120 / 弗三9~19", "詩一一九121～一二四8 / 弗三20~四3", "詩一二五1～一三二18 / 弗四4~16", "詩一三三1～一三八8 / 弗四17~32", "詩一三九1～一四四15 / 弗五1~21", "詩一四五1～一五〇6 / 弗五22~33", "箴一1～四27 / 弗六1~13", "箴五1～十二28 / 弗六14~24", "箴十三1～十八24 / 腓一1~19", "箴十九1～二四34 / 腓一20~二4", "箴二五1～三一31 / 腓二5~16", "傳一1～五20 / 腓二17~三6", "傳六1～十二14 / 腓三7~16", "歌一1～17 / 腓三17~四9", "歌二1～17 / 腓四10~23", "歌三1～四6 / 西一1~14", "歌四7～五1 / 西一15~29", "歌五2～六3 / 西二1~17", "歌六4～13 / 西二18~三11", "歌七1～八14 / 西三12~四18", "賽一1～31 / 帖前一1~10", "賽二1～四6 / 帖前二1~20", "賽五1～六13 / 帖前三1~四12", "賽七1～八22 / 帖前四13~五11", "賽九1～十34 / 帖前五12~28", "賽十一1～十三22 / 帖後一1~二12", "賽十四1～32 / 帖後二13~三18", "賽十五1～十九25 / 提前一1~4", "賽二十1～二二25 / 提前一5~20", "賽二三1～二六21 / 提前二1~15", "賽二七1～二八29 / 提前三1~13", "賽二九1～三十33 / 提前三14~四5", "賽三一1～三五10 / 提前四6~五25", "賽三六1～三七38 / 提前六1~21", "賽三八1～四十31 / 提後一1~18", "賽四一1～四二25 / 提後二1~三13", "賽四三1～四四28 / 提後三14~四22", "賽四五1～四六13 / 多一1~16", "賽四七1～四八22 / 多二1~15", "賽四九1～26 / 多三1~15", "賽五十1～五二15 / 門一1~25", "賽五三1～五四17 / 來一1~3", "賽五五1～五六12 / 來一4~14", "賽五七1～五八14 / 來二1~18", "賽五九1～六十22 / 來三1~19", "賽六一1～六二12 / 來四1~13", "賽六三1～六四12 / 來四14~五10", "賽六五1～六六24 / 來五11~六3", "耶一1～二19 / 來六4~20", "耶二20～三25 / 來七1~28", "耶四1～五31 / 來八1~13", "耶六1～七34 / 來九1~14", "耶八1～九26 / 來九15~28", "耶十1～十二17 / 來十1~25", "耶十三1～十四22 / 來十26~39", "耶十五1～十六9 / 來十一1~19", "耶十六10～十七27 / 來十一20~40", "耶十八1～十九15 / 來十二1~14", "耶二十1～二二30 / 來十二15~24", "耶二三1～40 / 來十二25~十三7", "耶二四1～二七22 / 來十三8~15", "耶二八1～三十24 / 來十三16~25", "耶三一1～40 / 雅一1~18", "耶三二1～三三26 / 雅一19~二13", "耶三四1～三五19 / 雅二14~三18", "耶三六1～三七21 / 雅四1~17", "耶三八1～四十16 / 雅五1~20", "耶四一1～四四30 / 彼前一1~5", "耶四五1～四八10 / 彼前一6~12", "耶四八11～四九22 / 彼前一13~25", "耶四九23～五十28 / 彼前二1~10", "耶五十29～五一32 / 彼前二11~三7", "耶五一33～五二34 / 彼前三8~22", "哀一1～二22 / 彼前四1~14", "哀三1～66 / 彼前四15~五4", "哀四1～五22 / 彼前五5~14", "結一1～28 / 彼後一1~4", "結二1～五17 / 彼後一5~18", "結六1～九11 / 彼後一19~二3", "結十1～十二28 / 彼後二4~22", "結十三1～十五8 / 彼後三1~9", "結十六1～十七24 / 彼後三10~14", "結十八1～二十44 / 彼後三15~18", "結二十45～二二31 / 約壹一1~4", "結二三1～二四27 / 約壹一5~7", "結二五1～二七36 / 約壹一8~二11", "結二八1～三十26 / 約壹二12~24", "結三一1～三三33 / 約壹二25~三5", "結三四1～三五15 / 約壹三6~18", "結三六1～38 / 約壹三19~四6", "結三七1～三八13 / 約壹四7~21", "結三八14～四十3 / 約壹五1~13", "結四十4～27 / 約壹五14~21", "結四十28～四一26 / 約貳一1~13", "結四二1～四四31 / 約參一1~14", "結四五1～四六24 / 猶一1~10", "結四七1～四八35 / 猶一11~25", "但一1～二30 / 啟一1~6", "但二31～三30 / 啟一7~13", "但四1～五31 / 啟一14~20", "但六1～七28 / 啟二1~7", "但八1～九27 / 啟二8~11", "但十1～十一19 / 啟二12~17", "但十一20～十二13 / 啟二18~29", "何一1～二1 / 啟三1~6", "何二2～三5 / 啟三7~13", "何四1～五15 / 啟三14~22", "何六1～七16 / 啟四1~11", "何八1～九17 / 啟五1~14", "何十1～十一12 / 啟六1~17", "何十二1～十四9 / 啟七1~17", "珥一1～二17 / 啟八1~12", "珥二18～三21 / 啟八13~九21", "摩一1～二16 / 啟十1~11", "摩三1～五27 / 啟十一1~15", "摩六1～九15 / 啟十一16~十二4", "俄1～21 / 啟十二5~18", "拿一1～四11 / 啟十三1~18", "彌一1～三12 / 啟十四1~12", "彌四1～七20 / 啟十四13~十五8", "鴻一1～三19 / 啟十六1~21", "哈一1～二20 / 啟十七1~16", "哈三1～番一18 / 啟十八1~十九4", "番二1～三20 / 啟十九5~16", "該一1～二23 / 啟十九17~二十6", "亞一1～二13 / 啟二十7~15", "亞三1～四14 / 啟二一1~2", "亞五1～八23 / 啟二一3~13", "亞九1～十一17 / 啟二一14~21", "亞十二1～十四21 / 啟二一22~二二2", "瑪一1～二17 / 啟二二3~15", "瑪三1～四6 / 啟二二16~21"];
+
+    const BIBLE_DATA = {
+      OT: [{ n: "創世記", c: 50 }, { n: "出埃及記", c: 40 }, { n: "利未記", c: 27 }, { n: "民數記", c: 36 }, { n: "申命記", c: 34 }, { n: "約書亞記", c: 24 }, { n: "士師記", c: 21 }, { n: "路得記", c: 4 }, { n: "撒母耳記上", c: 31 }, { n: "撒母耳記下", c: 24 }, { n: "列王紀上", c: 22 }, { n: "列王紀下", c: 25 }, { n: "歷代志上", c: 29 }, { n: "歷代志下", c: 36 }, { n: "以斯拉記", c: 10 }, { n: "尼希米記", c: 13 }, { n: "以斯帖記", c: 10 }, { n: "約伯記", c: 42 }, { n: "詩篇", c: 150 }, { n: "箴言", c: 31 }, { n: "傳道書", c: 12 }, { n: "雅歌", c: 8 }, { n: "以賽亞書", c: 66 }, { n: "耶利米書", c: 52 }, { n: "耶利米哀歌", c: 5 }, { n: "以西結書", c: 48 }, { n: "但以理書", c: 12 }, { n: "何西阿書", c: 14 }, { n: "約珥書", c: 3 }, { n: "阿摩司書", c: 9 }, { n: "俄巴底亞書", c: 1 }, { n: "約拿書", c: 4 }, { n: "彌迦書", c: 7 }, { n: "那鴻書", c: 3 }, { n: "哈巴谷書", c: 3 }, { n: "西番雅書", c: 3 }, { n: "哈該書", c: 2 }, { n: "撒加利亞書", c: 14 }, { n: "瑪拉基書", c: 4 }],
+      NT: [{ n: "馬太福音", c: 28 }, { n: "馬可福音", c: 16 }, { n: "路加福音", c: 24 }, { n: "約翰福音", c: 21 }, { n: "使徒行傳", c: 28 }, { n: "羅馬書", c: 16 }, { n: "哥林多前書", c: 16 }, { n: "哥林多後書", c: 13 }, { n: "加拉太書", c: 6 }, { n: "以弗所書", c: 6 }, { n: "腓立比書", c: 4 }, { n: "歌羅西書", c: 4 }, { n: "帖撒羅尼迦前書", c: 5 }, { n: "帖撒羅尼迦後書", c: 3 }, { n: "提摩太前書", c: 6 }, { n: "提摩太後書", c: 4 }, { n: "提多書", c: 3 }, { n: "腓利門書", c: 1 }, { n: "希伯來書", c: 13 }, { n: "雅各書", c: 5 }, { n: "彼得前書", c: 5 }, { n: "彼得後書", c: 3 }, { n: "約翰一書", c: 5 }, { n: "約翰二書", c: 1 }, { n: "約翰三書", c: 1 }, { n: "猶大書", c: 1 }, { n: "啟示錄", c: 22 }]
+    };
+
+    const TOTAL_OT = BIBLE_DATA.OT.reduce((sum, b) => sum + b.c, 0);
+    const TOTAL_NT = BIBLE_DATA.NT.reduce((sum, b) => sum + b.c, 0);
+    const TOTAL_PLAN = YEAR_PLAN_DATA.length;
+
+    // --- 初始化 ---
+    function startApp() {
+      // 從 GAS template 變數取得 groupId
+      const templateGroupId = "<?= appGroupId ?>";
+      groupId = (templateGroupId && templateGroupId !== "undefined" && templateGroupId !== "") ? templateGroupId.trim() : "";
+
+      if (!groupId) {
+        document.getElementById('loading-spinner').style.display = 'none';
+        document.getElementById('login-card').style.display = 'none';
+        const overlay = document.getElementById('login-overlay');
+        overlay.style.display = 'flex';
+        overlay.innerHTML = '<div style="text-align:center; padding:30px;"><div style="font-size:48px;">⚠️</div><div style="font-size:16px; font-weight:bold; color:#e74c3c; margin-top:12px;">連結無效</div><div style="font-size:13px; color:#666; margin-top:8px;">請透過 LINE 群組的專屬連結進入</div></div>';
+        return;
+      }
+
+      const prevGroupId = localStorage.getItem('bible_gid');
+      localStorage.setItem('bible_gid', groupId);
+      const groupChanged = prevGroupId && prevGroupId !== groupId;
+      console.log("應用程式啟動: groupId=" + groupId + ", prevGroupId=" + prevGroupId + ", groupChanged=" + groupChanged);
+
+      const pinInput = document.getElementById('pin-input');
+      if (pinInput) {
+        pinInput.addEventListener('input', function (e) {
+          this.value = this.value.replace(/[^0-9]/g, '');
+          if (this.value.length > 4) { this.value = this.value.slice(0, 4); }
+        });
+      }
+
+      const savedUid = localStorage.getItem('bible_uid');
+      const savedName = localStorage.getItem('bible_username');
+      const savedPin = localStorage.getItem('bible_pin_hash');
+      console.log("應用程式啟動: savedUid=" + savedUid + ", groupId=" + groupId);
+
+      if (savedUid && savedName && savedPin) {
+        userId = savedUid; userPin = savedPin; userName = savedName;
+        document.getElementById('display-name').innerText = userName;
+        console.log("使用已保存的登入: userId=" + userId);
+
+        // 群組已切換 → 清除憑證與快取，強制重新登入
+        if (groupChanged) {
+          console.log("群組已切換，清除登入憑證，要求重新登入");
+          localStorage.removeItem('bible_uid');
+          localStorage.removeItem('bible_username');
+          localStorage.removeItem('bible_pin_hash');
+          localStorage.removeItem('bible_progress_' + prevGroupId);
+          userId = ""; userPin = ""; userName = ""; globalProgress = {};
+          setTimeout(() => {
+            document.getElementById('loading-spinner').style.display = 'none';
+            document.getElementById('login-card').style.display = 'block';
+          }, 300);
+          return;
+        } else {
+          // 嘗試從 localStorage 載入快取進度，實現零等待
+          const cachedProgress = localStorage.getItem('bible_progress_' + groupId);
+          if (cachedProgress) {
+            try {
+              globalProgress = JSON.parse(cachedProgress);
+              console.log("已從本地快取載入進度，立即渲染");
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+              // 背景靜默同步伺服器
+              syncGlobalProgress(true);
+            } catch (e) {
+              console.error("本地快取解析失敗，改為伺服器同步", e);
+              localStorage.removeItem('bible_progress_' + groupId);
+              syncGlobalProgress(false);
+            }
+          } else {
+            syncGlobalProgress(false);
+          }
+        }
+      } else {
+        console.log("未找到已保存登入，顯示登入畫面");
+        setTimeout(() => {
+          document.getElementById('loading-spinner').style.display = 'none';
+          document.getElementById('login-card').style.display = 'block';
+        }, 300);
+      }
+    }
+
+    function saveProgressToLocal() {
+      try { localStorage.setItem('bible_progress_' + groupId, JSON.stringify(globalProgress)); }
+      catch (e) { console.warn("localStorage 寫入失敗", e); }
+    }
+
+    function syncGlobalProgress(silent) {
+      const currentUserId = userId;
+      if (!silent) {
+        document.getElementById('loading-msg').innerText = "進度同步中...";
+      }
+      console.log("開始同步進度: userId=" + userId + ", groupId=" + groupId + ", silent=" + silent);
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(data => {
+            if (userId !== currentUserId) { console.log("帳號已切換，丟棄舊資料"); return; }
+            if (data && data.__error) { console.error("進度讀取失敗: " + data.message); if (!silent) globalProgress = {}; }
+            else { globalProgress = data || {}; saveProgressToLocal(); }
+            console.log("進度同步完成", globalProgress);
+            if (!silent) {
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+            } else {
+              // 靜默同步完成，重新渲染當前視圖
+              if (currentTestament === 'Plan') renderPlanGrid();
+              else renderBookList();
+            }
+          })
+          .withFailureHandler(err => {
+            if (userId !== currentUserId) { console.log("帳號已切換，丟棄舊錯誤"); return; }
+            console.error("進度同步失敗", err);
+            if (!silent) {
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+            }
+          })
+          .getAllUserProgress(userId, userName, userPin, groupId);
+      } else {
+        if (!silent) {
+          document.getElementById('login-overlay').style.display = 'none';
+          switchTestament('Plan');
+        }
+      }
+    }
+
+    function handleLogin() {
+      const n = document.getElementById('username-input').value.trim();
+      const p = document.getElementById('pin-input').value.trim();
+      console.log("登入嘗試: name=" + n + ", pin=" + p);
+      if (!n || p.length !== 4) { return showToast("請輸入姓名與4位密碼"); }
+
+      document.getElementById('login-card').style.display = 'none';
+      document.getElementById('loading-spinner').style.display = 'block';
+      document.getElementById('loading-msg').innerText = "驗證中...";
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result && result.success) {
+              userId = result.userId; userPin = p; userName = n;
+              localStorage.setItem('bible_uid', userId);
+              localStorage.setItem('bible_username', userName);
+              localStorage.setItem('bible_pin_hash', p);
+              console.log("登入成功: userId=" + userId);
+              document.getElementById('display-name').innerText = userName;
+              syncGlobalProgress();
+            } else {
+              document.getElementById('login-card').style.display = 'block';
+              document.getElementById('loading-spinner').style.display = 'none';
+              showToast(result && result.message ? result.message : "登入失敗");
+              console.log("登入失敗: " + (result ? result.message : "未知錯誤"));
+            }
+          })
+          .withFailureHandler(err => {
+            document.getElementById('login-card').style.display = 'block';
+            document.getElementById('loading-spinner').style.display = 'none';
+            showToast("登入錯誤: " + err);
+            console.error("登入呼叫失敗", err);
+          })
+          .authenticateUser(n, p);
+      } else {
+        userId = n + "_" + p; userPin = p; userName = n;
+        localStorage.setItem('bible_uid', userId);
+        localStorage.setItem('bible_username', userName);
+        localStorage.setItem('bible_pin_hash', p);
+        document.getElementById('display-name').innerText = userName;
+        syncGlobalProgress();
+      }
+    }
+
+    function handleLogout() {
+      showConfirm("登出會回到登入畫面，確定嗎？", function () {
+        localStorage.removeItem('bible_uid');
+        localStorage.removeItem('bible_username');
+        localStorage.removeItem('bible_pin_hash');
+        localStorage.removeItem('bible_progress_' + groupId);
+        userId = ""; userPin = ""; userName = ""; globalProgress = {};
+        console.log("已登出");
+        document.getElementById('username-input').value = '';
+        document.getElementById('pin-input').value = '';
+        document.getElementById('loading-spinner').style.display = 'none';
+        document.getElementById('login-card').style.display = 'block';
+        document.getElementById('login-overlay').style.display = 'flex';
+      });
+    }
+
+    // --- 視圖控制 ---
+    function switchTestament(type) {
+      currentTestament = type;
+      ['OT', 'NT', 'Plan'].forEach(t => document.getElementById('tab-' + t).classList.toggle('active', t === type));
+      if (type === 'Plan') {
+        document.getElementById('tab-content-books').style.display = 'none';
+        document.getElementById('tab-content-plan').style.display = 'block';
+        renderPlanGrid();
+      } else {
+        document.getElementById('tab-content-plan').style.display = 'none';
+        document.getElementById('tab-content-books').style.display = 'flex';
+        renderBookList();
+      }
+    }
+
+    function closeToMain() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-main').classList.add('active');
+      if (currentTestament !== 'Plan') renderBookList();
+    }
+
+    function openMorePage() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-clear').classList.add('active');
+    }
+
+    function toggleStatsInfo() {
+      document.getElementById('stats-info-popup').classList.toggle('visible');
+    }
+
+    function closeStatsInfo() {
+      document.getElementById('stats-info-popup').classList.remove('visible');
+    }
+
+    function toggleGuidePopup() {
+      document.getElementById('guide-popup').classList.toggle('visible');
+    }
+
+    function closeGuidePopup() {
+      document.getElementById('guide-popup').classList.remove('visible');
+    }
+
+    function openMembersStats() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-stats').classList.add('active');
+
+      const container = document.getElementById('stats-list-container');
+      container.innerHTML = '<div style="text-align:center; padding: 30px;"><div class="spinner"></div><div style="margin-top:10px; color:#666; font-size:14px;">載入中...</div></div>';
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(renderMembersStats)
+          .withFailureHandler(err => {
+            container.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">載入失敗: ${err}</div>`;
+          })
+          .getGroupMemberStats(groupId, userId, userName, userPin);
+      } else {
+        setTimeout(() => {
+          renderMembersStats({
+            status: 'success',
+            members: [
+              { username: '測試用戶A', source: 'plan', planDays: 100, otChapters: 256, ntChapters: 72 },
+              { username: '測試用戶B', source: 'free', otChapters: 120, ntChapters: 50 },
+            ],
+            totalOT: 929, totalNT: 260
+          });
+        }, 500);
+      }
+    }
+
+    function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function renderMembersStats(data) {
+      const container = document.getElementById('stats-list-container');
+      if (!data || data.status === 'error') {
+        container.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">${data?.message || '載入失敗'}</div>`;
+        return;
+      }
+
+      const members = data.members || [];
+      const tOT = data.totalOT || 929;
+      const tNT = data.totalNT || 260;
+      members.sort((a, b) => (b.otChapters + b.ntChapters) - (a.otChapters + a.ntChapters));
+
+      if (members.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:#888; padding: 20px;">目前無成員資料</div>';
+        return;
+      }
+
+      const pct = (d, t) => t === 0 ? 0 : parseFloat(((d / t) * 100).toFixed(1));
+
+      let html = '';
+      members.forEach((m, idx) => {
+        const otPct = pct(m.otChapters, tOT);
+        const ntPct = pct(m.ntChapters, tNT);
+
+        html += `
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-name">${idx + 1}. ${escapeHtml(m.username)}</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>📜 舊約</span><span>${otPct}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${otPct}%"></div></div>
+            <div class="stat-total">${m.otChapters} / ${tOT} 章</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>📖 新約</span><span>${ntPct}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${ntPct}%; background:#2196F3;"></div></div>
+            <div class="stat-total">${m.ntChapters} / ${tNT} 章</div>
+          </div>
+        </div>
+      `;
+      });
+
+      container.innerHTML = html;
+    }
+
+    // --- 渲染邏輯 ---
+    function renderBookList() {
+      const list = document.getElementById('tab-content-books');
+      list.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      BIBLE_DATA[currentTestament].forEach((book, index) => {
+        const done = globalProgress[book.n] ? globalProgress[book.n].length : 0;
+        const pct = (done / book.c) * 100;
+        const row = document.createElement('div');
+        row.className = 'book-row';
+        row.onclick = () => openNormalBook(book.n, book.c);
+        row.innerHTML = `
+        <div class="book-row-main">
+          <div class="book-row-left"><span class="book-number">${index + 1}</span><span class="book-name">${book.n}</span></div>
+          <div class="book-row-right">${done === book.c ? '完成' : done + ' / ' + book.c} ❯</div>
+        </div>
+        <div class="mini-progress-bg"><div class="mini-progress-fill" style="width:${pct}%"></div></div>`;
+        frag.appendChild(row);
+      });
+      list.appendChild(frag);
+    }
+
+    function openNormalBook(name, count) {
+      selectedBook = name; document.getElementById('current-book-name').innerText = name;
+      document.getElementById('view-main').classList.remove('active');
+      document.getElementById('view-chapters').classList.add('active');
+      const grid = document.getElementById('chapter-grid'); grid.innerHTML = '';
+      const doneSet = new Set(globalProgress[name] || []);
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i <= count; i++) {
+        const box = document.createElement('div'); box.className = 'chapter-box' +
+          (doneSet.has(i.toString()) ? ' already-done' : ''); box.innerText = i; box.dataset.chapter = i.toString();
+        box.onclick = function () { if (!this.classList.contains('already-done')) this.classList.toggle('selected'); };
+        frag.appendChild(box);
+      }
+      grid.appendChild(frag);
+    }
+
+    function renderPlanGrid() {
+      const grid = document.getElementById('plan-grid');
+      grid.innerHTML = '';
+      const doneSet = new Set(globalProgress['一年讀經'] || []);
+      let firstIncomp = 1; let found = false;
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i <= TOTAL_PLAN; i++) {
+        const o = doneSet.has(i + '_OT'), n = doneSet.has(i + '_NT');
+        let st = o && n ? 'status-2' : (o || n ? 'status-1' : 'status-0');
+        if (!found && st !== 'status-2') { firstIncomp = i; found = true; }
+        const cell = document.createElement('div'); cell.className = `plan-cell ${st}`; cell.id = `plan-cell-${i}`; cell.innerText = i;
+        cell.onclick = () => selectPlanDay(i);
+        frag.appendChild(cell);
+      }
+      grid.appendChild(frag);
+      if (currentPlanDay === 1 && found) currentPlanDay = firstIncomp;
+      selectPlanDay(currentPlanDay);
+    }
+
+    function selectPlanDay(day) {
+      if (day < 1 || day > TOTAL_PLAN) return; currentPlanDay = day;
+      document.querySelectorAll('.plan-cell').forEach(el => el.classList.remove('active-day'));
+      document.getElementById(`plan-cell-${day}`).classList.add('active-day');
+      document.getElementById('p-day-title').innerText = `第 ${day} 天`;
+      const parts = YEAR_PLAN_DATA[day - 1].split(' / ');
+      document.getElementById('pt-ot-ref').innerText = parts[0];
+      document.getElementById('pt-nt-ref').innerText = parts[1] || '';
+      const doneSet = new Set(globalProgress['一年讀經'] || []);
+      const o = doneSet.has(day + '_OT'), n = doneSet.has(day + '_NT');
+      document.getElementById('pt-ot-row').className = 'plan-task-row' + (o ? ' done' : '');
+      document.getElementById('pt-nt-row').className = 'plan-task-row' + (n ? ' done' : '');
+      document.getElementById('pt-ot-check').innerText = o ? '✓' : '';
+      document.getElementById('pt-nt-check').innerText = n ? '✓' : '';
+      checkPlanSave();
+    }
+
+    function togglePlanTask(t) {
+      const r = document.getElementById(`pt-${t}-row`); if (r.classList.contains('done')) return;
+      r.classList.toggle('selected');
+      document.getElementById(`pt-${t}-check`).innerText = r.classList.contains('selected') ? '✓' : '';
+      checkPlanSave();
+    }
+
+    function checkPlanSave() {
+      const s = document.querySelectorAll('.plan-task-row.selected').length > 0;
+      document.getElementById('plan-save-btn').style.display = s ? 'block' : 'none';
+    }
+
+    function savePlanProgress() {
+      let chs = [];
+      if (document.getElementById('pt-ot-row').classList.contains('selected')) chs.push(currentPlanDay + '_OT');
+      if (document.getElementById('pt-nt-row').classList.contains('selected')) chs.push(currentPlanDay + '_NT');
+      if (chs.length) executeSave('一年讀經', chs, () => { selectPlanDay(currentPlanDay); renderPlanGrid(); });
+    }
+
+    function submitNormalProgress() {
+      const sel = document.querySelectorAll('#chapter-grid .chapter-box.selected');
+      if (!sel.length) return showAlert("請點選章節");
+      executeSave(selectedBook, Array.from(sel).map(b => b.dataset.chapter.trim()), () => {
+        // 留在當前頁面，重新渲染章節格子狀態
+        const book = BIBLE_DATA[currentTestament === 'OT' ? 'OT' : 'NT'].find(b => b.n === selectedBook);
+        if (book) openNormalBook(book.n, book.c);
+      });
+    }
+
+    // --- 操作載入 modal 輔助函式 ---
+    function showOpLoading(msg) {
+      document.getElementById('op-loading-msg').innerText = msg || '處理中...';
+      document.getElementById('op-loading-modal').classList.add('visible');
+    }
+
+    function hideOpLoading() {
+      document.getElementById('op-loading-modal').classList.remove('visible');
+    }
+
+    // --- 清除進度功能 ---
+    function confirmClear(type, label) {
+      if (!userId) {
+        showToast("錯誤: 用戶ID為空");
+        return;
+      }
+      showConfirm(`確定要清除您的「${label}」嗎？\n此動作將永久刪除伺服器上的紀錄！`, function () {
+        if (typeof google === 'undefined') {
+          showToast("Google API 未載入");
+          return;
+        }
+
+        showOpLoading(`正在清除${label}...`);
+
+        google.script.run
+          .withSuccessHandler(function (result) {
+            if (result && result.status === 'error') {
+              hideOpLoading();
+              showToast('清除失敗: ' + (result.message || '未知錯誤'));
+              return;
+            }
+            // 清除成功後重新同步進度
+            google.script.run
+              .withSuccessHandler(function (data) {
+                globalProgress = (!data || data.__error) ? {} : data;
+                saveProgressToLocal();
+                hideOpLoading();
+                showToast(`${label}已成功清除!`);
+                if (currentTestament === 'Plan') renderPlanGrid();
+                else renderBookList();
+              })
+              .withFailureHandler(function (err) {
+                hideOpLoading();
+                showToast('同步失敗: ' + err);
+              })
+              .getAllUserProgress(userId, userName, userPin, groupId);
+          })
+          .withFailureHandler(function (err) {
+            hideOpLoading();
+            showToast('清除失敗: ' + err);
+          })
+          .clearUserProgress(userId, userName, userPin, type, groupId);
+      }, true);
+    }
+
+    function showConfirm(message, onConfirm, isDanger) {
+      const modal = document.getElementById('custom-modal');
+      document.getElementById('custom-modal-msg').innerText = message;
+      const cancelBtn = document.getElementById('custom-modal-cancel');
+      const okBtn = document.getElementById('custom-modal-ok');
+      cancelBtn.style.display = '';
+      okBtn.className = 'custom-modal-ok' + (isDanger ? ' danger' : '');
+      modal.classList.add('visible');
+      okBtn.onclick = () => { modal.classList.remove('visible'); onConfirm(); };
+      cancelBtn.onclick = () => { modal.classList.remove('visible'); };
+    }
+
+    function showAlert(message) {
+      const modal = document.getElementById('custom-modal');
+      document.getElementById('custom-modal-msg').innerText = message;
+      const cancelBtn = document.getElementById('custom-modal-cancel');
+      const okBtn = document.getElementById('custom-modal-ok');
+      cancelBtn.style.display = 'none';
+      okBtn.className = 'custom-modal-ok';
+      modal.classList.add('visible');
+      okBtn.onclick = () => { modal.classList.remove('visible'); };
+    }
+
+    function showToast(message) {
+      let toastContainer = document.getElementById('toast-container');
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.style.cssText = 'position:fixed;bottom:120px;left:10px;right:10px;z-index:10001;max-width:calc(100% - 20px);';
+        document.body.appendChild(toastContainer);
+      }
+
+      // 限制最多顯示 3 個 toast，移除最舊的
+      while (toastContainer.children.length >= 3) {
+        toastContainer.removeChild(toastContainer.firstChild);
+      }
+
+      const toast = document.createElement('div');
+      toast.style.cssText = 'background:#2c3e50;color:white;padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:8px;word-wrap:break-word;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+      toast.innerText = message;
+      toastContainer.appendChild(toast);
+
+      console.log("💬 Toast: " + message);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    function setSaveUiState(isSaving) {
+      isSavingProgress = isSaving;
+      const planSaveBtn = document.getElementById('plan-save-btn');
+      const normalSaveBtn = document.querySelector('.save-btn');
+
+      if (planSaveBtn) {
+        planSaveBtn.disabled = isSaving;
+        planSaveBtn.style.opacity = isSaving ? '0.65' : '1';
+        planSaveBtn.style.cursor = isSaving ? 'not-allowed' : 'pointer';
+      }
+
+      if (normalSaveBtn) {
+        normalSaveBtn.disabled = isSaving;
+        normalSaveBtn.style.opacity = isSaving ? '0.65' : '1';
+        normalSaveBtn.style.cursor = isSaving ? 'not-allowed' : 'pointer';
+      }
+    }
+
+    // --- 共用儲存 ---
+    function executeSave(bName, chs, cb) {
+      if (isSavingProgress) {
+        showToast('儲存中，請稍候...');
+        return;
+      }
+
+      const uniqueChapters = Array.from(new Set((chs || []).map(c => String(c).trim()).filter(Boolean)));
+      if (!bName || !uniqueChapters.length) return;
+
+      // 前端去重：過濾掉已存在的章節，只送新章節給伺服器
+      const existingSet = new Set(globalProgress[bName] || []);
+      const newChapters = uniqueChapters.filter(c => !existingSet.has(c));
+      if (!newChapters.length) {
+        showToast('這些章節已經記錄過了');
+        return;
+      }
+
+      setSaveUiState(true);
+
+      // 樂觀更新：立即更新記憶體中的 UI 狀態（不寫 localStorage，確保關頁面時資料一致）
+      if (!globalProgress[bName]) globalProgress[bName] = [];
+      const rollbackLen = globalProgress[bName].length;
+      newChapters.forEach(c => globalProgress[bName].push(c));
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler((result) => {
+            console.log("saveProgress 回應:", result);
+
+            if (result && result.status === "error") {
+              // 伺服器失敗，回滾記憶體狀態（精確截斷至樂觀更新前的長度）
+              globalProgress[bName].length = rollbackLen;
+              setSaveUiState(false);
+              showToast('儲存失敗: ' + (result.message || '未知錯誤'));
+              return;
+            }
+
+            // 伺服器確認成功，才寫入 localStorage
+            saveProgressToLocal();
+            showToast(`已儲存 ${newChapters.length} 筆`);
+            if (cb) cb();
+            setSaveUiState(false);
+          })
+          .withFailureHandler((err) => {
+            // 伺服器失敗，回滾記憶體狀態（精確截斷至樂觀更新前的長度）
+            globalProgress[bName].length = rollbackLen;
+            setSaveUiState(false);
+            console.error("saveProgress 錯誤:", err);
+            showToast('儲存失敗: ' + err);
+          })
+          .saveProgress({ userId, groupId, username: userName, pin: userPin, book: bName, chapters: newChapters });
+      } else {
+        if (cb) cb();
+        setSaveUiState(false);
+      }
+    }
+
+    function openProgressView() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-progress').classList.add('active');
+
+      // 計算逐卷章節進度
+      let otChaptersDone = 0;
+      let ntChaptersDone = 0;
+      BIBLE_DATA.OT.forEach(book => { otChaptersDone += (globalProgress[book.n]?.length || 0); });
+      BIBLE_DATA.NT.forEach(book => { ntChaptersDone += (globalProgress[book.n]?.length || 0); });
+
+      // 計算一年讀經進度
+      const planDoneSet = new Set(globalProgress['一年讀經'] || []);
+      let planOtDone = 0;
+      let planNtDone = 0;
+      for (let day = 1; day <= TOTAL_PLAN; day++) {
+        if (planDoneSet.has(day + '_OT')) planOtDone++;
+        if (planDoneSet.has(day + '_NT')) planNtDone++;
+      }
+      // 百分比輔助函式
+      const calcPct = (done, total) => total === 0 ? 0 : parseFloat(((done / total) * 100).toFixed(2));
+      const otPct = calcPct(otChaptersDone, TOTAL_OT);
+      const ntPct = calcPct(ntChaptersDone, TOTAL_NT);
+      const planOtPct = calcPct(planOtDone, TOTAL_PLAN);
+      const planNtPct = calcPct(planNtDone, TOTAL_PLAN);
+
+      // 更新 UI
+      document.getElementById('pct-ot').innerText = otPct + '%';
+      document.getElementById('bar-ot').style.width = otPct + '%';
+      document.getElementById('txt-ot').innerText = `${otChaptersDone} / ${TOTAL_OT} 章`;
+
+      document.getElementById('pct-nt').innerText = ntPct + '%';
+      document.getElementById('bar-nt').style.width = ntPct + '%';
+      document.getElementById('txt-nt').innerText = `${ntChaptersDone} / ${TOTAL_NT} 章`;
+
+      document.getElementById('pct-plan-ot').innerText = planOtPct + '%';
+      document.getElementById('bar-plan-ot').style.width = planOtPct + '%';
+      document.getElementById('txt-plan-ot').innerText = `${planOtDone} / ${TOTAL_PLAN} 天`;
+
+      document.getElementById('pct-plan-nt').innerText = planNtPct + '%';
+      document.getElementById('bar-plan-nt').style.width = planNtPct + '%';
+      document.getElementById('txt-plan-nt').innerText = `${planNtDone} / ${TOTAL_PLAN} 天`;
+    }
+
+
+    window.onload = startApp;
+  </script>
+</body>
+
+</html>
