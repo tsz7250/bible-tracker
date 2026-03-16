@@ -1,6 +1,6 @@
-# 📖 聖經與生命讀經讀經打卡
+# 📖 聖經與生命讀經 進度紀錄
 
-一個以 LINE Bot + Google Apps Script (GAS) 製作的聖經讀經打卡應用，幫助群組成員記錄每日讀經、追蹤完成度，並同步整合生命讀經進度與群組統計排名。
+一個以 LINE Bot + Google Apps Script (GAS) 製作的讀經進度紀錄應用，幫助群組成員記錄每日讀經、追蹤完成度，並同步整合生命讀經進度與群組統計排名。
 
 <p align="center">
   <img src="pic/demo.png" alt="一年讀經畫面" width="360">
