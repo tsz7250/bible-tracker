@@ -693,7 +693,7 @@ function doGet(e) {
   return tmpl.evaluate()
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .setTitle('聖經讀經進度紀錄');
+    .setTitle('讀經進度紀錄');
 }
 
 /**
@@ -739,15 +739,15 @@ function getOrCreateStatsSheet() {
 
   if (!sheet) {
     sheet = ss.insertSheet("Stats");
-    sheet.appendRow(["GroupID", "UserID", "OT", "NT"]);
-    sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
+    sheet.appendRow(["GroupID", "UserID", "OT", "NT", "LS_OT", "LS_NT"]);
+    sheet.getRange("A1:F1").setFontWeight("bold").setBackground("#f3f3f3");
     sheet.setFrozenRows(1);
   } else {
-    const headers = sheet.getRange("A1:D1").getValues()[0];
-    if (headers[0] !== "GroupID" || headers[1] !== "UserID") {
+    const headers = sheet.getRange("A1:F1").getValues()[0];
+    if (headers[0] !== "GroupID" || headers[1] !== "UserID" || headers.length < 6) {
       sheet.clearContents();
-      sheet.getRange("A1:D1").setValues([["GroupID", "UserID", "OT", "NT"]]);
-      sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
+      sheet.getRange("A1:F1").setValues([["GroupID", "UserID", "OT", "NT", "LS_OT", "LS_NT"]]);
+      sheet.getRange("A1:F1").setFontWeight("bold").setBackground("#f3f3f3");
       sheet.setFrozenRows(1);
     }
   }
@@ -765,10 +765,9 @@ function updateUserStats(userId, groupId, existingSheet) {
     const progressSheet = existingSheet || getProgressSheet();
     const lastRow = progressSheet.getLastRow();
     if (lastRow <= 1) {
-      _writeStatsRow(groupId, userId, 0, 0);
+      _writeStatsRow(groupId, userId, 0, 0, 0, 0);
       return;
     }
-
     const data = progressSheet.getRange(2, 1, lastRow - 1, 4).getValues();
     const records = [];
     data.forEach(row => {
@@ -778,7 +777,7 @@ function updateUserStats(userId, groupId, existingSheet) {
     });
 
     const result = calculateUserTotalProgress("", userId, records);
-    _writeStatsRow(groupId, userId, result.otChapters, result.ntChapters);
+    _writeStatsRow(groupId, userId, result.otChapters, result.ntChapters, result.lsOT, result.lsNT);
   } catch (e) {
     Logger.log("updateUserStats 錯誤: " + e.toString());
   }
@@ -787,20 +786,20 @@ function updateUserStats(userId, groupId, existingSheet) {
 /**
  * 寫入或更新 Stats 表中的一列
  */
-function _writeStatsRow(groupId, userId, ot, nt) {
+function _writeStatsRow(groupId, userId, ot, nt, lsOT, lsNT) {
   const sheet = getOrCreateStatsSheet();
   const lastRow = sheet.getLastRow();
 
   if (lastRow > 1) {
-    const allData = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+    const allData = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
     for (let i = 0; i < allData.length; i++) {
       if (String(allData[i][0]).trim() === groupId && String(allData[i][1]).trim() === userId) {
-        sheet.getRange(i + 2, 3, 1, 2).setValues([[ot, nt]]);
+        sheet.getRange(i + 2, 3, 1, 4).setValues([[ot, nt, lsOT, lsNT]]);
         return;
       }
     }
   }
-  sheet.appendRow([groupId, userId, ot, nt]);
+  sheet.appendRow([groupId, userId, ot, nt, lsOT, lsNT]);
 }
 
 /**
@@ -849,6 +848,83 @@ function saveProgress(data) {
   } catch (e) {
     Logger.log("saveProgress 錯誤: " + e.toString());
     throw new Error("試算表寫入失敗: " + e.message);
+  } finally {
+    if (lock) lock.releaseLock();
+  }
+}
+
+/**
+ * 同步進度（支援同時新增與移除）
+ */
+function syncProgress(data) {
+  let lock;
+  try {
+    const safeUserId   = String((data && data.userId)   || "").trim();
+    const safeGroupId  = String((data && data.groupId)  || "").trim();
+    const safeUsername = String((data && data.username) || "").trim();
+    const safePin      = String((data && data.pin)      || "").trim();
+    const safeBook     = String((data && data.book)     || "").trim();
+    const addedChapters  = Array.isArray(data && data.addedChapters) ? data.addedChapters : [];
+    const removedChapters = Array.isArray(data && data.removedChapters) ? data.removedChapters : [];
+
+    const safeAdded = Array.from(new Set(addedChapters.map(ch => String(ch).trim()).filter(Boolean)));
+    const safeRemoved = Array.from(new Set(removedChapters.map(ch => String(ch).trim()).filter(Boolean)));
+
+    Logger.log("syncProgress: userId='" + safeUserId + "', book='" + safeBook + "', added=" + JSON.stringify(safeAdded) + ", removed=" + JSON.stringify(safeRemoved));
+
+    if (!safeUserId || !safeGroupId || !safeUsername || !safePin || !safeBook) {
+      return { status: "error", message: "同步資料不完整" };
+    }
+
+    const authResult = verifyUserAuth(safeUsername, safePin, safeUserId);
+    if (!authResult.authenticated) {
+      return { status: "error", message: authResult.error || "身份驗證失敗" };
+    }
+
+    lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+
+    const sheet = getProgressSheet();
+    const lastRow = sheet.getLastRow();
+    const now = new Date();
+
+    // 處理移除
+    if (safeRemoved.length > 0 && lastRow > 1) {
+      const removedSet = new Set(safeRemoved);
+      const allData = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+      const rowsToKeep = allData.filter(row => {
+        const rowUser  = String(row[0]).trim();
+        const rowGroup = String(row[1]).trim();
+        const rowBook  = String(row[2]).trim();
+        const rowChap  = String(row[3]).trim();
+        if (rowUser === safeUserId && rowGroup === safeGroupId && rowBook === safeBook && removedSet.has(rowChap)) {
+          return false;
+        }
+        return true;
+      });
+
+      if (allData.length !== rowsToKeep.length) {
+        sheet.getRange(2, 1, lastRow - 1, 5).clearContent();
+        if (rowsToKeep.length > 0) {
+          sheet.getRange(2, 1, rowsToKeep.length, 5).setValues(rowsToKeep);
+        }
+      }
+    }
+
+    // 處理新增
+    if (safeAdded.length > 0) {
+      const currentLastRow = sheet.getLastRow();
+      const rowsToInsert = safeAdded.map(chapter => [safeUserId, safeGroupId, safeBook, chapter, now]);
+      sheet.getRange(currentLastRow + 1, 1, rowsToInsert.length, 5).setValues(rowsToInsert);
+    }
+
+    // 更新 Stats 快取
+    updateUserStats(safeUserId, safeGroupId, sheet);
+
+    return { status: "success", addedCount: safeAdded.length, removedCount: safeRemoved.length };
+  } catch (e) {
+    Logger.log("syncProgress 錯誤: " + e.toString());
+    return { status: "error", message: e.toString() };
   } finally {
     if (lock) lock.releaseLock();
   }
@@ -918,9 +994,9 @@ function clearUserProgress(userId, username, pin, type, groupId) {
       return { status: "error", message: authResult.error || "身份驗證失敗" };
     }
     
-    const VALID_TYPES = ['OT', 'NT', 'Plan', 'All'];
+    const VALID_TYPES = ['OT', 'NT', 'Plan', 'LifeStudy', 'All'];
     if (!VALID_TYPES.includes(safeType)) {
-      return { status: "error", message: "無效的 type 參數，必須為 OT／NT／Plan／All" };
+      return { status: "error", message: "無效的 type 參數，必須為 OT／NT／Plan／LifeStudy／All" };
     }
 
     lock = LockService.getScriptLock();
@@ -947,6 +1023,13 @@ function clearUserProgress(userId, username, pin, type, groupId) {
       const rowBook  = String(row[2]).trim();
       // 不同用戶或不同群組的資料一律保留
       if (rowUser !== safeUserId || rowGroup !== safeGroupId) return true;
+      
+      // 生命讀經：僅當 type 為 LifeStudy 或 All 時清除
+      if (rowBook === "LifeStudy") {
+        if (safeType === 'LifeStudy' || safeType === 'All') return false;
+        return true;
+      }
+
       if (safeType === 'OT'   && otBooks.has(rowBook)) return false;
       if (safeType === 'NT'   && ntBooks.has(rowBook)) return false;
       if (safeType === 'Plan' && rowBook === "一年讀經")    return false;
@@ -1127,12 +1210,18 @@ function verifyUserAuth(username, pin, expectedUserId) {
 function calculateUserTotalProgress(username, userId, records) {
   const readOT = new Set();
   const readNT = new Set();
+  const lsOT = new Set();
+  const lsNT = new Set();
   let planCompletedDays = 0;
   const planDaysMap = {};
   
   // 使用全域常數
   const otBooks = OT_BOOKS_SET;
   const ntBooks = NT_BOOKS_SET;
+  
+  // 生命讀經書卷簡稱集合 (用於統計歸類)
+  const otLsBooks = new Set(["創", "出", "利", "民", "申", "書", "士", "得", "撒", "王", "代", "拉", "尼", "斯", "伯", "詩", "箴", "傳", "歌", "賽", "耶", "哀", "結", "但", "何", "珥", "摩", "俄", "拿", "彌", "鴻", "哈", "番", "該", "亞", "瑪"]);
+  const ntLsBooks = new Set(["太", "可", "路", "約", "徒", "羅", "林前", "林後", "加", "弗", "腓", "西", "帖前", "帖後", "提前", "提後", "多", "門", "來", "希", "雅", "彼前", "彼後", "約壹", "約貳", "約參", "猶", "啟"]);
 
   records.forEach(r => {
     if (r.book === "一年讀經") {
@@ -1142,6 +1231,16 @@ function calculateUserTotalProgress(username, userId, records) {
         const testament = match[2];
         if (!planDaysMap[day]) planDaysMap[day] = { OT: false, NT: false };
         planDaysMap[day][testament] = true;
+      }
+    } else if (r.book === "LifeStudy") {
+      const match = String(r.chapter).match(/^(.+?)生讀\s?(\d+.*)$/);
+      if (match) {
+        const prefix = match[1];
+        if (otLsBooks.has(prefix)) {
+          lsOT.add(r.chapter);
+        } else if (ntLsBooks.has(prefix)) {
+          lsNT.add(r.chapter);
+        }
       }
     } else {
       if (otBooks.has(r.book)) {
@@ -1180,7 +1279,9 @@ function calculateUserTotalProgress(username, userId, records) {
     otChapters: readOT.size,
     ntChapters: readNT.size,
     source: (planCompletedDays > 0) ? 'plan' : 'free',
-    planDays: planCompletedDays
+    planDays: planCompletedDays,
+    lsOT: lsOT.size,
+    lsNT: lsNT.size
   };
 }
 
@@ -1213,7 +1314,7 @@ function getGroupMemberStats(groupId, userId, username, pin) {
       return { status: "success", members: [], totalOT: TOTAL_OT_CHAPTERS, totalNT: TOTAL_NT_CHAPTERS };
     }
 
-    const statsData = statsSheet.getRange(2, 1, lastRow - 1, 4).getValues();
+    const statsData = statsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
     
     // 從 _executionUsersCache 取得用戶名對應（verifyUserAuth 已讀取並快取）
     const usersData = _executionUsersCache || [];
@@ -1231,7 +1332,9 @@ function getGroupMemberStats(groupId, userId, username, pin) {
           username: userIdToName[uId] || "未知用戶",
           userId: uId,
           otChapters: Number(row[2]) || 0,
-          ntChapters: Number(row[3]) || 0
+          ntChapters: Number(row[3]) || 0,
+          lsOT: Number(row[4]) || 0,
+          lsNT: Number(row[5]) || 0
         });
       }
     });
