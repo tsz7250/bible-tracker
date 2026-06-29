@@ -19,10 +19,17 @@
       <div id="loading-msg" style="color:#666; font-size:14px; font-weight:bold; margin-top:10px;">進度同步中...</div>
     </div>
     <div id="login-card" class="login-card" style="display: none;">
-      <h3 style="margin-top:0; color:var(--secondary);">📖 讀經進度紀錄</h3>
-      <input type="text" id="username-input" class="login-input" placeholder="請輸入姓名/暱稱">
-      <input type="text" id="pin-input" class="login-input" placeholder="密碼 (限4位數字)" maxlength="4" inputmode="numeric">
-      <button class="login-btn" onclick="handleLogin()">進入系統</button>
+      <h3 id="login-card-title" style="margin-top:0; color:var(--secondary);">📖 讀經進度紀錄</h3>
+      <!-- 僅註冊模式顯示 -->
+      <input type="text" id="display-name-input" class="login-input" placeholder="請輸入姓名（顯示用）" style="display:none;">
+      <input type="text" id="account-input" class="login-input" placeholder="請輸入帳號">
+      <input type="password" id="pin-input" class="login-input" placeholder="請輸入密碼">
+      <!-- 僅註冊模式顯示 -->
+      <input type="password" id="pin-confirm-input" class="login-input" placeholder="請再次輸入密碼" style="display:none;">
+      <button id="login-btn" class="login-btn" onclick="handleLogin()">進入系統</button>
+      <div style="text-align:center; margin-top:12px;">
+        <a id="toggle-mode-link" href="#" style="font-size:13px; color:var(--secondary); text-decoration:none;" onclick="toggleLoginMode(); return false;">📝 我要註冊</a>
+      </div>
     </div>
   </div>
 

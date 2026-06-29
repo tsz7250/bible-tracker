@@ -6,16 +6,56 @@
 // ============================================================
 let _lineTokenCache = null;
 function getLineChannelAccessToken() {
-  if (_lineTokenCache === null) {
-    _lineTokenCache = PropertiesService.getScriptProperties().getProperty("LINE_CHANNEL_ACCESS_TOKEN") || "";
+  if (_lineTokenCache !== null) {
+    return _lineTokenCache;
+  }
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get("LINE_CHANNEL_ACCESS_TOKEN");
+    if (cached !== null) {
+      _lineTokenCache = cached;
+      return _lineTokenCache;
+    }
+  } catch (e) {
+    console.error("CacheService 讀取失敗: " + e.toString());
+  }
+
+  const value = PropertiesService.getScriptProperties().getProperty("LINE_CHANNEL_ACCESS_TOKEN") || "";
+  _lineTokenCache = value;
+
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.put("LINE_CHANNEL_ACCESS_TOKEN", value, 600); // 快取 10 分鐘
+  } catch (e) {
+    console.error("CacheService 寫入失敗: " + e.toString());
   }
   return _lineTokenCache;
 }
 
 let _webappUrlCache = null;
 function getWebappUrl() {
-  if (_webappUrlCache === null) {
-    _webappUrlCache = PropertiesService.getScriptProperties().getProperty("WEBAPP_URL") || "";
+  if (_webappUrlCache !== null) {
+    return _webappUrlCache;
+  }
+  try {
+    const cache = CacheService.getScriptCache();
+    const cached = cache.get("WEBAPP_URL");
+    if (cached !== null) {
+      _webappUrlCache = cached;
+      return _webappUrlCache;
+    }
+  } catch (e) {
+    console.error("CacheService 讀取失敗: " + e.toString());
+  }
+
+  const value = PropertiesService.getScriptProperties().getProperty("WEBAPP_URL") || "";
+  _webappUrlCache = value;
+
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.put("WEBAPP_URL", value, 600); // 快取 10 分鐘
+  } catch (e) {
+    console.error("CacheService 寫入失敗: " + e.toString());
   }
   return _webappUrlCache;
 }
@@ -31,8 +71,6 @@ function getActiveSS() {
 
 // 常數與 PLAN_CHAPTER_MAPPING 已搬移至 constants.gs
 // ============================================================
-// 執行週期內的 Users 快取（避免同一次請求中重複讀取試算表）
-let _executionUsersCache = null;
 
 /**
  * 處理 LINE Webhook 傳入的事件
@@ -81,13 +119,18 @@ function doPost(e) {
  * @param {Array}  messages  - 最多 5 則訊息物件的陣列
  */
 function replyToLine(replyToken, messages) {
+  const token = getLineChannelAccessToken();
+  if (!token) {
+    console.warn("LINE_CHANNEL_ACCESS_TOKEN 未設定，跳過 LINE Reply 傳送。");
+    return;
+  }
   const url = "https://api.line.me/v2/bot/message/reply";
   const payload = JSON.stringify({ replyToken: replyToken, messages: messages });
 
   const options = {
     method: "post",
     contentType: "application/json",
-    headers: { Authorization: "Bearer " + getLineChannelAccessToken() },
+    headers: { Authorization: "Bearer " + token },
     payload: payload,
     muteHttpExceptions: true
   };
@@ -126,20 +169,53 @@ function getProgressSheet() {
 
   if (!sheet) {
     sheet = ss.insertSheet("Progress");
-    sheet.appendRow(["UserID", "GroupID", "Book", "Chapter", "Timestamp"]);
-    sheet.getRange("A1:E1").setFontWeight("bold").setBackground("#f3f3f3");
+    sheet.appendRow(["UserID", "GroupID", "ProgressJSON", "Timestamp"]);
+    sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
+    sheet.getRange("C:C").setNumberFormat("@");
     sheet.setFrozenRows(1);
   } else {
-    const headers = sheet.getRange("A1:E1").getValues()[0];
-    if (headers[0] !== "UserID" || headers[1] !== "GroupID") {
-      // 欄位不符，清除重建（開發期間允許直接重置）
+    const headers = sheet.getRange("A1:D1").getValues()[0];
+    if (headers[0] !== "UserID" || headers[1] !== "GroupID" || headers[2] !== "ProgressJSON") {
       sheet.clearContents();
-      sheet.getRange("A1:E1").setValues([["UserID", "GroupID", "Book", "Chapter", "Timestamp"]]);
-      sheet.getRange("A1:E1").setFontWeight("bold").setBackground("#f3f3f3");
+      sheet.getRange("A1:D1").setValues([["UserID", "GroupID", "ProgressJSON", "Timestamp"]]);
+      sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
+      sheet.getRange("C:C").setNumberFormat("@");
       sheet.setFrozenRows(1);
     }
   }
   return sheet;
+}
+
+/**
+ * 取得指定用戶在此群組的進度列資訊
+ * @param {Sheet}  sheet
+ * @param {string} userId
+ * @param {string} groupId
+ * @return {object} { index: 列號(1-based), progress: 進度對照Map, timestamp: 時間戳 }
+ */
+function _getUserProgressRow(sheet, userId, groupId) {
+  // use TextFinder to locate the user row directly to avoid loading the whole sheet in memory
+  const finder = sheet.getRange("A:A").createTextFinder(userId).matchEntireCell(true);
+  const cells = finder.findAll();
+  for (let i = 0; i < cells.length; i++) {
+    const row = cells[i].getRow();
+    const rowGroupId = String(sheet.getRange(row, 2).getValue()).trim();
+    if (rowGroupId === groupId) {
+      const rowValues = sheet.getRange(row, 3, 1, 2).getValues()[0];
+      let progress = {};
+      try {
+        progress = JSON.parse(rowValues[0] || "{}");
+      } catch (e) {
+        console.error("解析 ProgressJSON 失敗: " + rowValues[0] + ", " + e.toString());
+      }
+      return {
+        index: row,
+        progress: progress,
+        timestamp: rowValues[1]
+      };
+    }
+  }
+  return { index: -1, progress: {}, timestamp: null };
 }
 
 /**
@@ -185,7 +261,12 @@ function updateUserStats(userId, groupId, existingSheet) {
     const records = [];
     data.forEach(row => {
       if (String(row[0]).trim() === userId && String(row[1]).trim() === groupId) {
-        records.push({ book: String(row[2]).trim(), chapter: String(row[3]).trim() });
+        const book = String(row[2]).trim();
+        const chaptersStr = String(row[3]).trim();
+        const chapters = chaptersStr ? chaptersStr.split(",").map(c => c.trim()).filter(Boolean) : [];
+        chapters.forEach(ch => {
+          records.push({ book: book, chapter: ch });
+        });
       }
     });
 
@@ -215,67 +296,13 @@ function _writeStatsRow(groupId, userId, ot, nt, lsOT, lsNT) {
   sheet.appendRow([groupId, userId, ot, nt, lsOT, lsNT]);
 }
 
-/**
- * 儲存進度
- */
-function saveProgress(data) {
-  let lock;
-  try {
-    const safeUserId   = String((data && data.userId)   || "").trim();
-    const safeGroupId  = String((data && data.groupId)  || "").trim();
-    const safeUsername = String((data && data.username) || "").trim();
-    const safePin      = String((data && data.pin)      || "").trim();
-    const safeBook     = String((data && data.book)     || "").trim();
-    const rawChapters  = Array.isArray(data && data.chapters) ? data.chapters : [];
-    const safeChapters = Array.from(new Set(rawChapters.map(ch => String(ch).trim()).filter(Boolean)));
-
-    console.log("saveProgress: userId='" + safeUserId + "', groupId='" + safeGroupId + "', book='" + safeBook + "', chapters=" + JSON.stringify(safeChapters));
-
-    if (!safeUserId || !safeGroupId || !safeUsername || !safePin || !safeBook || !safeChapters.length) {
-      return { status: "error", message: "儲存資料不完整", addedCount: 0, skippedCount: 0 };
-    }
-
-    const authResult = verifyUserAuth(safeUsername, safePin, safeUserId);
-    if (!authResult.authenticated) {
-      return { status: "error", message: authResult.error || "身份驗證失敗", addedCount: 0, skippedCount: 0 };
-    }
-
-    lock = LockService.getScriptLock();
-    lock.waitLock(5000);
-
-    const sheet = getProgressSheet();
-    const now = new Date();
-
-    // 前端已做去重，後端直接 append（不再掃全表比對）
-    const rowsToInsert = safeChapters.map(chapter => [safeUserId, safeGroupId, safeBook, chapter, now]);
-
-    if (rowsToInsert.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rowsToInsert.length, 5).setValues(rowsToInsert);
-    }
-    console.log("saveProgress: 新增 " + rowsToInsert.length + " 筆");
-
-    // 更新 Stats 快取（傳入已持有的 sheet 避免重複讀取）
-    updateUserStats(safeUserId, safeGroupId, sheet);
-
-    return { status: "success", addedCount: rowsToInsert.length };
-  } catch (e) {
-    console.log("saveProgress 錯誤: " + e.toString());
-    throw new Error("試算表寫入失敗: " + e.message);
-  } finally {
-    if (lock) lock.releaseLock();
-  }
-}
-
-/**
- * 同步進度（支援同時新增與移除）
- */
 function syncProgress(data) {
   let lock;
   try {
     const safeUserId   = String((data && data.userId)   || "").trim();
     const safeGroupId  = String((data && data.groupId)  || "").trim();
     const safeUsername = String((data && data.username) || "").trim();
-    const safePin      = String((data && data.pin)      || "").trim();
+    const safeToken    = String((data && data.sessionToken) || "").trim();
     const safeBook     = String((data && data.book)     || "").trim();
     const addedChapters  = Array.isArray(data && data.addedChapters) ? data.addedChapters : [];
     const removedChapters = Array.isArray(data && data.removedChapters) ? data.removedChapters : [];
@@ -283,58 +310,87 @@ function syncProgress(data) {
     const safeAdded = Array.from(new Set(addedChapters.map(ch => String(ch).trim()).filter(Boolean)));
     const safeRemoved = Array.from(new Set(removedChapters.map(ch => String(ch).trim()).filter(Boolean)));
 
-    console.log("syncProgress: userId='" + safeUserId + "', book='" + safeBook + "', added=" + JSON.stringify(safeAdded) + ", removed=" + JSON.stringify(safeRemoved));
-
-    if (!safeUserId || !safeGroupId || !safeUsername || !safePin || !safeBook) {
+    if (!safeUserId || !safeGroupId || !safeUsername || !safeToken || !safeBook) {
       return { status: "error", message: "同步資料不完整" };
     }
 
-    const authResult = verifyUserAuth(safeUsername, safePin, safeUserId);
+    // 輸入安全性防護與白名單校驗
+    const allBooks = new Set([...OT_BOOKS_SET, ...NT_BOOKS_SET, "一年讀經", "LifeStudy"]);
+    if (!allBooks.has(safeBook)) {
+      return { status: "error", message: "無效的書卷名稱" };
+    }
+    // 限制 chapters 的最大長度與正則格式以防範惡意注入
+    const progressRegex = /^(\d+(_OT|_NT)?|.+?生讀\s?\d+.*)$/;
+    for (let c of [...safeAdded, ...safeRemoved]) {
+      if (c.length > 50 || !progressRegex.test(c)) {
+        return { status: "error", message: "章節格式不正確" };
+      }
+    }
+
+    const authResult = verifyUserAuth(safeUsername, safeToken, safeUserId);
     if (!authResult.authenticated) {
       return { status: "error", message: authResult.error || "身份驗證失敗" };
     }
 
     lock = LockService.getScriptLock();
-    lock.waitLock(10000);
+    // use tryLock instead of waitLock to handle timeout gracefully
+    const hasLock = lock.tryLock(10000);
+    if (!hasLock) {
+      return { status: "error", message: "伺服器繁忙，請稍候再試" };
+    }
 
     const sheet = getProgressSheet();
-    const lastRow = sheet.getLastRow();
     const now = new Date();
-
-    // 處理移除
-    if (safeRemoved.length > 0 && lastRow > 1) {
-      const removedSet = new Set(safeRemoved);
-      const allData = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
-      const rowsToKeep = allData.filter(row => {
-        const rowUser  = String(row[0]).trim();
-        const rowGroup = String(row[1]).trim();
-        const rowBook  = String(row[2]).trim();
-        const rowChap  = String(row[3]).trim();
-        if (rowUser === safeUserId && rowGroup === safeGroupId && rowBook === safeBook && removedSet.has(rowChap)) {
-          return false;
-        }
-        return true;
-      });
-
-      if (allData.length !== rowsToKeep.length) {
-        sheet.getRange(2, 1, lastRow - 1, 5).clearContent();
-        if (rowsToKeep.length > 0) {
-          sheet.getRange(2, 1, rowsToKeep.length, 5).setValues(rowsToKeep);
-        }
+    
+    const userRow = _getUserProgressRow(sheet, safeUserId, safeGroupId);
+    const progress = userRow.progress;
+    
+    const existChapters = progress[safeBook] || [];
+    const existSet = new Set(existChapters);
+    
+    let addedCount = 0;
+    let removedCount = 0;
+    
+    safeAdded.forEach(c => {
+      if (!existSet.has(c)) {
+        existSet.add(c);
+        addedCount++;
       }
+    });
+    
+    safeRemoved.forEach(c => {
+      if (existSet.has(c)) {
+        existSet.delete(c);
+        removedCount++;
+      }
+    });
+    
+    const finalChapters = Array.from(existSet);
+    if (finalChapters.length > 0) {
+      progress[safeBook] = finalChapters;
+    } else {
+      delete progress[safeBook];
+    }
+    
+    const jsonStr = JSON.stringify(progress);
+    
+    if (userRow.index !== -1) {
+      sheet.getRange(userRow.index, 3, 1, 2).setValues([[jsonStr, now]]);
+    } else {
+      sheet.appendRow([safeUserId, safeGroupId, jsonStr, now]);
     }
 
-    // 處理新增
-    if (safeAdded.length > 0) {
-      const currentLastRow = sheet.getLastRow();
-      const rowsToInsert = safeAdded.map(chapter => [safeUserId, safeGroupId, safeBook, chapter, now]);
-      sheet.getRange(currentLastRow + 1, 1, rowsToInsert.length, 5).setValues(rowsToInsert);
+    // 直接在記憶體中更新 Stats
+    const records = [];
+    for (let book in progress) {
+      progress[book].forEach(ch => {
+        records.push({ book: book, chapter: ch });
+      });
     }
+    const statsResult = calculateUserTotalProgress("", safeUserId, records);
+    _writeStatsRow(safeGroupId, safeUserId, statsResult.otChapters, statsResult.ntChapters, statsResult.lsOT, statsResult.lsNT);
 
-    // 更新 Stats 快取
-    updateUserStats(safeUserId, safeGroupId, sheet);
-
-    return { status: "success", addedCount: safeAdded.length, removedCount: safeRemoved.length };
+    return { status: "success", addedCount: addedCount, removedCount: removedCount };
   } catch (e) {
     console.error("syncProgress 錯誤: " + e.toString());
     return { status: "error", message: e.toString() };
@@ -344,43 +400,32 @@ function syncProgress(data) {
 }
 
 /**
- * 讀取用戶在指定群組的所有進度
+ * 取得用戶進度地圖的輔助方法 (內部調用)
  */
-function getAllUserProgress(userId, username, pin, groupId) {
+function _getUserProgressMap(userId, groupId, existingSheet) {
+  const sheet = existingSheet || getProgressSheet();
+  const userRow = _getUserProgressRow(sheet, userId, groupId);
+  return userRow.progress;
+}
+
+/**
+ * 讀取用戶在指定群組的所有進度 (JSON格式直接回傳)
+ */
+function getAllUserProgress(userId, username, sessionToken, groupId) {
   try {
     const safeUserId  = String(userId  || "").trim();
     const safeGroupId = String(groupId || "").trim();
     const safeUsername = String(username || "").trim();
-    const safePin      = String(pin      || "").trim();
+    const safeToken    = String(sessionToken || "").trim();
 
     if (!safeGroupId) return { __error: true, message: "groupId 為空" };
 
-    const authResult = verifyUserAuth(safeUsername, safePin, safeUserId);
+    const authResult = verifyUserAuth(safeUsername, safeToken, safeUserId);
     if (!authResult.authenticated) {
       return { __error: true, message: authResult.error || "身份驗證失敗" };
     }
 
-    const sheet = getProgressSheet();
-    const lastRow = sheet.getLastRow();
-    if (lastRow <= 1) return {};
-
-    // 欄位順序：[UserID, GroupID, Book, Chapter, Timestamp]
-    const data = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
-    const progressSets = {};  // 用 Set 收集，自動去重
-    data.forEach(row => {
-      if (String(row[0]).trim() === safeUserId && String(row[1]).trim() === safeGroupId) {
-        const book    = String(row[2]).trim();
-        const chapter = String(row[3]).trim();
-        if (!progressSets[book]) progressSets[book] = new Set();
-        progressSets[book].add(chapter);
-      }
-    });
-    // 轉換為 Array 格式回傳（前端相容）
-    const progressMap = {};
-    for (const book in progressSets) {
-      progressMap[book] = Array.from(progressSets[book]);
-    }
-    return progressMap;
+    return _getUserProgressMap(safeUserId, safeGroupId);
   } catch (e) {
     console.error("getAllUserProgress 錯誤: " + e.toString());
     return { __error: true, message: e.toString() };
@@ -388,21 +433,21 @@ function getAllUserProgress(userId, username, pin, groupId) {
 }
 
 /**
- * 清除用戶在指定群組的特定類別進度
+ * 清除用戶在指定群組的特定類別進度 (扁平化架構優化版)
  */
-function clearUserProgress(userId, username, pin, type, groupId) {
+function clearUserProgress(userId, username, sessionToken, type, groupId) {
   let lock;
   try {
     const safeUserId  = String(userId  || "").trim();
     const safeGroupId = String(groupId || "").trim();
     const safeUsername = String(username || "").trim();
-    const safePin      = String(pin      || "").trim();
+    const safeToken    = String(sessionToken || "").trim();
     const safeType     = String(type     || "").trim();
 
     if (!safeGroupId) return { status: "error", message: "groupId 為空" };
     
     // 驗證用戶身份
-    const authResult = verifyUserAuth(safeUsername, safePin, safeUserId);
+    const authResult = verifyUserAuth(safeUsername, safeToken, safeUserId);
     if (!authResult.authenticated) {
       return { status: "error", message: authResult.error || "身份驗證失敗" };
     }
@@ -413,54 +458,69 @@ function clearUserProgress(userId, username, pin, type, groupId) {
     }
 
     lock = LockService.getScriptLock();
-    lock.waitLock(10000);
+    // tryLock instead of waitLock to handle timeout gracefully
+    const hasLock = lock.tryLock(10000);
+    if (!hasLock) {
+      return { status: "error", message: "伺服器繁忙，請稍候再試" };
+    }
     
     const sheet = getProgressSheet();
-    const lastRow = sheet.getLastRow();
+    const userRow = _getUserProgressRow(sheet, safeUserId, safeGroupId);
     
-    if (lastRow <= 1) {
-      return { status: "success" };
+    if (userRow.index === -1) {
+      return { status: "success", deletedCount: 0, updatedProgress: {} };
     }
-
-    // 使用全域常數
+    
+    const progress = userRow.progress;
     const otBooks = OT_BOOKS_SET;
     const ntBooks = NT_BOOKS_SET;
-
-    // 批次讀取所有資料列（含 GroupID 與 Timestamp，共 5 欄）
-    // 欄位順序：[UserID, GroupID, Book, Chapter, Timestamp]
-    const allData = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
-
-    const rowsToKeep = allData.filter(row => {
-      const rowUser  = String(row[0]).trim();
-      const rowGroup = String(row[1]).trim();
-      const rowBook  = String(row[2]).trim();
-      // 不同用戶或不同群組的資料一律保留
-      if (rowUser !== safeUserId || rowGroup !== safeGroupId) return true;
-      
-      // 生命讀經：僅當 type 為 LifeStudy 或 All 時清除
-      if (rowBook === "LifeStudy") {
-        if (safeType === 'LifeStudy' || safeType === 'All') return false;
-        return true;
+    
+    let deletedCount = 0;
+    
+    if (safeType === 'All') {
+      for (let book in progress) {
+        deletedCount += progress[book].length;
       }
-
-      if (safeType === 'OT'   && otBooks.has(rowBook)) return false;
-      if (safeType === 'NT'   && ntBooks.has(rowBook)) return false;
-      if (safeType === 'Plan' && rowBook === "一年讀經")    return false;
-      if (safeType === 'All') return false;
-      return true;
-    });
-
-    const deleteCount = allData.length - rowsToKeep.length;
-
-    sheet.getRange(2, 1, lastRow - 1, 5).clearContent();
-    if (rowsToKeep.length > 0) {
-      sheet.getRange(2, 1, rowsToKeep.length, 5).setValues(rowsToKeep);
+      userRow.progress = {};
+    } else {
+      for (let book in progress) {
+        let shouldDelete = false;
+        if (book === "LifeStudy" && safeType === 'LifeStudy') {
+          shouldDelete = true;
+        } else if (safeType === 'OT' && otBooks.has(book)) {
+          shouldDelete = true;
+        } else if (safeType === 'NT' && ntBooks.has(book)) {
+          shouldDelete = true;
+        } else if (safeType === 'Plan' && book === "一年讀經") {
+          shouldDelete = true;
+        }
+        
+        if (shouldDelete) {
+          deletedCount += progress[book].length;
+          delete progress[book];
+        }
+      }
     }
-
-    // 更新 Stats 快取
-    updateUserStats(safeUserId, safeGroupId);
-
-    return { status: "success", deletedCount: deleteCount };
+    
+    const now = new Date();
+    const jsonStr = JSON.stringify(progress);
+    sheet.getRange(userRow.index, 3, 1, 2).setValues([[jsonStr, now]]);
+    
+    // 直接在記憶體中更新 Stats
+    const records = [];
+    for (let book in progress) {
+      progress[book].forEach(ch => {
+        records.push({ book: book, chapter: ch });
+      });
+    }
+    const statsResult = calculateUserTotalProgress("", safeUserId, records);
+    _writeStatsRow(safeGroupId, safeUserId, statsResult.otChapters, statsResult.ntChapters, statsResult.lsOT, statsResult.lsNT);
+    
+    return { 
+      status: "success", 
+      deletedCount: deletedCount, 
+      updatedProgress: progress 
+    };
   } catch (e) {
     console.error("clearUserProgress 錯誤: " + e.toString());
     return { status: "error", message: e.toString() };
@@ -468,28 +528,33 @@ function clearUserProgress(userId, username, pin, type, groupId) {
     if (lock) lock.releaseLock();
   }
 }
-
 /**
- * 取得或建立 Users 工作表（儲存用戶名、PIN hash 和 UserID）
+ * 取得或建立 Users 工作表
+ * Schema: [Account, PIN_Hash, UserID, DisplayName]
+ *   Account     — 帳號（唯一，登入用）
+ *   PIN_Hash    — SHA-256 base64
+ *   UserID      — UUID 前 8 碼
+ *   DisplayName — 姓名（顯示用，可重複）
  */
 function getOrCreateUsersSheet() {
   const ss = getActiveSS();
   let sheet = ss.getSheetByName("Users");
-  
+
   if (!sheet) {
     sheet = ss.insertSheet("Users");
-    sheet.appendRow(["Username", "PIN_Hash", "UserID"]);
-    sheet.getRange("A1:C1").setFontWeight("bold").setBackground("#f3f3f3");
-    // 強制整個 A 欄為文本格式（防止 "001" 被轉換為 1）
+    sheet.appendRow(["Account", "PIN_Hash", "UserID", "DisplayName"]);
+    sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
     sheet.getRange("A:A").setNumberFormat("@");
+    sheet.getRange("D:D").setNumberFormat("@");
     sheet.setFrozenRows(1);
   } else {
     const headerCheck = sheet.getRange("A1").getValue();
-    if (headerCheck !== "Username") {
+    if (headerCheck !== "Account") {
       sheet.insertRowBefore(1);
-      sheet.getRange("A1:C1").setValues([["Username", "PIN_Hash", "UserID"]]);
-      sheet.getRange("A1:C1").setFontWeight("bold").setBackground("#f3f3f3");
+      sheet.getRange("A1:D1").setValues([["Account", "PIN_Hash", "UserID", "DisplayName"]]);
+      sheet.getRange("A1:D1").setFontWeight("bold").setBackground("#f3f3f3");
       sheet.getRange("A:A").setNumberFormat("@");
+      sheet.getRange("D:D").setNumberFormat("@");
       sheet.setFrozenRows(1);
     }
   }
@@ -497,122 +562,173 @@ function getOrCreateUsersSheet() {
 }
 
 /**
- * 計算 PIN 的 SHA256 hash
+ * 登入用戶（帳號已存在才能登入）
+ * @param {string} account - 帳號（唯一）
+ * @param {string} pinHash - PIN 哈希值 (SHA-256 base64)
+ * @return {object} { success, message, userId, displayName }
  */
-function computePinHash(pin) {
-  // GAS 的 Utilities.computeDigest_ 返回 byte array，需轉換為 hex string
-  const hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, pin);
-  return Utilities.base64Encode(hash); // 用 base64 編碼作為 hash 儲存
+function loginUser(account, pinHash) {
+  try {
+    const safe_account = String(account || "").trim();
+    const safe_pinHash = String(pinHash || "").trim();
+
+    if (!safe_account || !safe_pinHash) {
+      return { success: false, message: "帳號或密碼格式無效" };
+    }
+
+    // 暴力破解防護 (CacheService)
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "fail_login_" + safe_account;
+    const failedAttempts = Number(cache.get(cacheKey) || 0);
+    if (failedAttempts >= 5) {
+      return { success: false, message: "登入失敗次數過多，帳號已被鎖定 5 分鐘" };
+    }
+
+    const sheet = getOrCreateUsersSheet();
+    // 使用 Column A TextFinder 精準定位帳號
+    const cell = sheet.getRange("A:A").createTextFinder(safe_account).matchEntireCell(true).findNext();
+    if (!cell) {
+      return { success: false, message: "帳號不存在，請先註冊" };
+    }
+
+    const row = cell.getRow();
+    const userData = sheet.getRange(row, 1, 1, 4).getValues()[0];
+    const existingHash = String(userData[1]).trim();
+    const existingUserId = String(userData[2]).trim();
+    const existingDisplayName = String(userData[3]).trim();
+
+    if (existingHash === safe_pinHash) {
+      console.log("loginUser: 登入成功 - userId='" + existingUserId + "'");
+      cache.remove(cacheKey); // 成功登入，清除錯誤計數
+      
+      // 生成 Session Token
+      const sessionToken = Utilities.getUuid();
+      cache.put("session_" + existingUserId, sessionToken, 21600); // 6 小時
+      
+      return { 
+        success: true, 
+        message: "登入成功", 
+        userId: existingUserId, 
+        displayName: existingDisplayName,
+        sessionToken: sessionToken
+      };
+    } else {
+      const newAttempts = failedAttempts + 1;
+      cache.put(cacheKey, String(newAttempts), 300); // 鎖定 300 秒 (5 分鐘)
+      return { success: false, message: "密碼不正確 (剩餘嘗試次數：" + (5 - newAttempts) + ")" };
+    }
+  } catch (e) {
+    console.error("loginUser 錯誤: " + e.toString());
+    return { success: false, message: "登入失敗: " + e.toString() };
+  }
 }
 
 /**
- * 驗證或建立用戶
- * @param {string} username - 用戶名稱
- * @param {string} pin - PIN 明文 (4 碼)
- * @return {object} { success: boolean, message: string, userId: string }
+ * 建立新用戶（帳號不能重複）
+ * @param {string} account         - 帳號（唯一）
+ * @param {string} pinHash         - PIN 哈希值 (SHA-256 base64)
+ * @param {string} confirmPinHash  - 確認 PIN 哈希值
+ * @param {string} displayName     - 姓名（顯示用，可重複）
+ * @return {object} { success, message, userId, displayName }
  */
-function authenticateUser(username, pin) {
+function registerUser(account, pinHash, confirmPinHash, displayName) {
   let lock;
   try {
-    const username_safe = String(username || "").trim();
-    const pin_safe = String(pin || "").trim();
-    
-    console.log("authenticateUser: 嘗試登入 - username='" + username_safe + "', pin='" + pin_safe + "'");
-    
-    if (!username_safe || !pin_safe || pin_safe.length !== 4 || !/^\d{4}$/.test(pin_safe)) {
-      console.log("authenticateUser: 格式驗證失敗");
-      return { success: false, message: "用戶名或 PIN 格式無效" };
+    const safe_account         = String(account         || "").trim();
+    const safe_pinHash         = String(pinHash         || "").trim();
+    const safe_confirmPinHash  = String(confirmPinHash  || "").trim();
+    const safe_displayName     = String(displayName     || "").trim();
+
+    if (!safe_account || !safe_pinHash) {
+      return { success: false, message: "帳號或密碼格式無效" };
     }
-    
-    const pinHash = computePinHash(pin_safe);
+    if (!safe_displayName) {
+      return { success: false, message: "姓名不能為空" };
+    }
+    if (safe_pinHash !== safe_confirmPinHash) {
+      return { success: false, message: "兩次密碼不一致" };
+    }
 
     lock = LockService.getScriptLock();
-    lock.waitLock(5000);
-
-    const sheet = getOrCreateUsersSheet();
-    const lastRow = sheet.getLastRow();
-    console.log("authenticateUser: Users 表共 " + lastRow + " 列");
-
-    // 檢查用戶是否已存在（根據 username + pinHash）
-    if (lastRow > 1) {
-      const allUsers = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-      // 同步更新快取
-      _executionUsersCache = allUsers;
-      for (let i = 0; i < allUsers.length; i++) {
-        const existingUsername = String(allUsers[i][0]).trim();
-        const existingHash     = String(allUsers[i][1]).trim();
-        const existingUserId   = String(allUsers[i][2]).trim();
-        if (existingUsername === username_safe) {
-          if (existingHash === pinHash) {
-            console.log("authenticateUser: 登入成功 - userId='" + existingUserId + "'");
-            return { success: true, message: "登入成功", userId: existingUserId };
-          } else {
-            console.log("authenticateUser: PIN 不正確");
-            return { success: false, message: "PIN 不正確" };
-          }
-        }
-      }
+    // use tryLock instead of waitLock to handle timeout gracefully
+    const hasLock = lock.tryLock(5000);
+    if (!hasLock) {
+      return { success: false, message: "伺服器繁忙，請稍候再試" };
     }
 
-    // 用戶不存在，建立新用戶（使用 UUID 前 8 位作為 UserID）
+    const sheet = getOrCreateUsersSheet();
+    
+    // 使用 Column A TextFinder 精準搜尋是否已存在帳號
+    const cell = sheet.getRange("A:A").createTextFinder(safe_account).matchEntireCell(true).findNext();
+    if (cell) {
+      return { success: false, message: "帳號已被使用，請選擇其他帳號" };
+    }
+
     const newUserId = generateShortUserId();
     const newRow = sheet.getLastRow() + 1;
     sheet.getRange(newRow, 1).setNumberFormat("@");
-    sheet.getRange(newRow, 1, 1, 3).setValues([[username_safe, pinHash, newUserId]]);
-    // 更新快取
-    _executionUsersCache = null;
-    console.log("authenticateUser: 新用戶建立 - userId='" + newUserId + "'");
-    return { success: true, message: "新用戶建立成功", userId: newUserId };
+    sheet.getRange(newRow, 4).setNumberFormat("@");
+    sheet.getRange(newRow, 1, 1, 4).setValues([[safe_account, safe_pinHash, newUserId, safe_displayName]]);
+    console.log("registerUser: 新用戶建立 - account='" + safe_account + "', userId='" + newUserId + "'");
     
+    // 生成 Session Token
+    const sessionToken = Utilities.getUuid();
+    const cache = CacheService.getScriptCache();
+    cache.put("session_" + newUserId, sessionToken, 21600); // 6 小時
+
+    return { 
+      success: true, 
+      message: "帳號建立成功", 
+      userId: newUserId, 
+      displayName: safe_displayName,
+      sessionToken: sessionToken
+    };
+
   } catch (e) {
-    console.error("authenticateUser 錯誤: " + e.toString());
-    return { success: false, message: "驗證失敗: " + e.toString() };
+    console.error("registerUser 錯誤: " + e.toString());
+    return { success: false, message: "建立失敗: " + e.toString() };
   } finally {
     if (lock) lock.releaseLock();
   }
 }
 
 /**
- * 驗證用戶身份（用於其他 API 調用）
+ * 向後相容：委派給 loginUser
  */
-function verifyUserAuth(username, pin, expectedUserId) {
+function authenticateUser(username, pinHash) {
+  return loginUser(username, pinHash);
+}
+
+/**
+ * 驗證用戶身份（使用 Cache 驗證 Session Token，並提供 Brute-Force 防護）
+ */
+function verifyUserAuth(username, sessionToken, expectedUserId) {
   try {
     const username_safe = String(username || "").trim();
-    const pin_safe = String(pin || "").trim();
+    const token_safe = String(sessionToken || "").trim();
+    const expectedUserId_safe = String(expectedUserId || "").trim();
     
-    if (!username_safe || !pin_safe || pin_safe.length !== 4 || !/^\d{4}$/.test(pin_safe)) {
-      return { authenticated: false, error: "用戶名或 PIN 格式無效" };
+    if (!username_safe || !token_safe || !expectedUserId_safe) {
+      return { authenticated: false, error: "驗證參數不完整" };
     }
 
-    const pinHash = computePinHash(pin_safe);
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "fail_auth_" + username_safe;
+    const failedAttempts = Number(cache.get(cacheKey) || 0);
+    if (failedAttempts >= 5) {
+      return { authenticated: false, error: "帳號安全鎖定中，請 5 分鐘後再試" };
+    }
 
-    // 使用執行週期內快取，避免同次請求中多次讀取試算表
-    if (!_executionUsersCache) {
-      const sheet = getOrCreateUsersSheet();
-      const lastRow = sheet.getLastRow();
-      _executionUsersCache = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, 3).getValues() : [];
+    // 從快取中比對 Session Token
+    const cachedToken = cache.get("session_" + expectedUserId_safe);
+    if (cachedToken !== null && cachedToken === token_safe) {
+      return { authenticated: true };
     }
-    const allUsers = _executionUsersCache;
 
-    if (allUsers.length === 0) {
-      return { authenticated: false, error: "用戶不存在" };
-    }
-    
-    for (let i = 0; i < allUsers.length; i++) {
-      const existingUsername = String(allUsers[i][0]).trim();
-      const existingHash = String(allUsers[i][1]).trim();
-      const existingUserId = String(allUsers[i][2]).trim();
-      
-      if (existingUsername === username_safe && existingHash === pinHash) {
-        if (expectedUserId && existingUserId !== expectedUserId) {
-          console.log("verifyUserAuth: UserID 不匹配");
-          return { authenticated: false, error: "UserID 不匹配" };
-        }
-        return { authenticated: true };
-      }
-    }
-    
-    return { authenticated: false, error: "身份驗證失敗" };
+    // 驗證失敗，紀錄錯誤次數
+    const newAttempts = failedAttempts + 1;
+    cache.put(cacheKey, String(newAttempts), 300); // 鎖定 5 分鐘
+    return { authenticated: false, error: "憑證已過期或無效，請重新登入" };
   } catch (e) {
     console.error("verifyUserAuth 錯誤: " + e.toString());
     return { authenticated: false, error: e.toString() };
@@ -709,23 +825,28 @@ function calculateUserTotalProgress(username, userId, records) {
  * @param {string} groupId 
  * @param {string} userId - 用於驗證
  * @param {string} username - 用於驗證
- * @param {string} pin - 用於驗證
+ * @param {string} sessionToken - 用於驗證
  */
-function getGroupMemberStats(groupId, userId, username, pin) {
+function getGroupMemberStats(groupId, userId, username, sessionToken) {
   try {
     const safeGroupId = String(groupId || "").trim();
-    
-    // 驗證呼叫者
-    const authResult = verifyUserAuth(username, pin, userId);
-    if (!authResult.authenticated) {
-      return { status: "error", message: authResult.error || "身份驗證失敗" };
-    }
-    
     if (!safeGroupId) {
       return { status: "error", message: "groupId 為空" };
     }
 
-    // 從 Stats 快取表讀取（不再掃描 Progress 全表）
+    // 驗證呼叫者身份
+    const authResult = verifyUserAuth(username, sessionToken, userId);
+    if (!authResult.authenticated) {
+      return { status: "error", message: authResult.error || "身份驗證失敗" };
+    }
+
+    // 從 Users 表載入所有用戶以進行映射 (僅讀取必要欄位)
+    // batch read is faster than TextFinder for groups (reduces GAS API roundtrips)
+    const usersSheet = getOrCreateUsersSheet();
+    const lastRowUsers = usersSheet.getLastRow();
+    const usersData = lastRowUsers > 1 ? usersSheet.getRange(2, 1, lastRowUsers - 1, 4).getValues() : [];
+
+    // 從 Stats 快取表讀取
     const statsSheet = getOrCreateStatsSheet();
     const lastRow = statsSheet.getLastRow();
     
@@ -735,11 +856,13 @@ function getGroupMemberStats(groupId, userId, username, pin) {
 
     const statsData = statsSheet.getRange(2, 1, lastRow - 1, 6).getValues();
     
-    // 從 _executionUsersCache 取得用戶名對應（verifyUserAuth 已讀取並快取）
-    const usersData = _executionUsersCache || [];
-    const userIdToName = {};
+    const userIdToInfo = {};
     usersData.forEach(r => {
-      userIdToName[String(r[2]).trim()] = String(r[0]).trim();
+      const uid = String(r[2]).trim();
+      userIdToInfo[uid] = {
+        displayName: String(r[3]).trim() || String(r[0]).trim(),
+        account: String(r[0]).trim()
+      };
     });
 
     const members = [];
@@ -747,8 +870,11 @@ function getGroupMemberStats(groupId, userId, username, pin) {
       const gId = String(row[0]).trim();
       if (gId === safeGroupId) {
         const uId = String(row[1]).trim();
+        const info = userIdToInfo[uId] || { displayName: "未知用戶", account: uId };
         members.push({
-          username: userIdToName[uId] || "未知用戶",
+          _displayName: info.displayName,
+          _account: info.account,
+          username: info.displayName,  // 暫定，下方會依重複情況覆寫
           userId: uId,
           otChapters: Number(row[2]) || 0,
           ntChapters: Number(row[3]) || 0,
@@ -756,6 +882,17 @@ function getGroupMemberStats(groupId, userId, username, pin) {
           lsNT: Number(row[5]) || 0
         });
       }
+    });
+
+    // 同群組有重複姓名時，在姓名後附加 (帳號)
+    const nameCount = {};
+    members.forEach(m => { nameCount[m._displayName] = (nameCount[m._displayName] || 0) + 1; });
+    members.forEach(m => {
+      if (nameCount[m._displayName] > 1) {
+        m.username = m._displayName + "(" + m._account + ")";
+      }
+      delete m._displayName;
+      delete m._account;
     });
     
     return { 
@@ -768,4 +905,61 @@ function getGroupMemberStats(groupId, userId, username, pin) {
     console.error("getGroupMemberStats 錯誤: " + e.toString());
     return { status: "error", message: e.toString() };
   }
+}
+
+/**
+ * 測試套件：進行單元與效能基準測試
+ */
+function testSuite() {
+  console.log("=== 啟動單元與基準測試 ===");
+  const testUser = "test_user_benchmark";
+  const testGroup = "test_group_benchmark";
+  
+  // 1. 測試 TextFinder vs getValues 效能
+  const sheet = getProgressSheet();
+  
+  console.log("正在測試舊版 getValues 遍歷查詢...");
+  const t0 = new Date().getTime();
+  const lastRow = sheet.getLastRow();
+  let foundOld = false;
+  if (lastRow > 1) {
+    const data = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+    for (let i = 0; i < data.length; i++) {
+      if (String(data[i][0]).trim() === testUser && String(data[i][1]).trim() === testGroup) {
+        foundOld = true;
+      }
+    }
+  }
+  const t1 = new Date().getTime();
+  console.log(`getValues 遍歷耗時: ${t1 - t0} ms (找到: ${foundOld})`);
+  
+  console.log("正在測試新版 TextFinder 定位查詢...");
+  const t2 = new Date().getTime();
+  const finder = sheet.getRange("A:A").createTextFinder(testUser).matchEntireCell(true);
+  const cells = finder.findAll();
+  let foundNew = false;
+  for (let i = 0; i < cells.length; i++) {
+    const row = cells[i].getRow();
+    const rowGroupId = String(sheet.getRange(row, 2).getValue()).trim();
+    if (rowGroupId === testGroup) {
+      foundNew = true;
+    }
+  }
+  const t3 = new Date().getTime();
+  console.log(`TextFinder 定位耗時: ${t3 - t2} ms (找到: ${foundNew})`);
+  
+  // 2. 測試 Session Token 驗證與 Brute-Force 機制
+  console.log("正在測試 Session Token 生成與驗證...");
+  const mockUserId = "test_uid_123";
+  const mockToken = Utilities.getUuid();
+  const cache = CacheService.getScriptCache();
+  cache.put("session_" + mockUserId, mockToken, 300);
+  
+  const authValid = verifyUserAuth("test_account", mockToken, mockUserId);
+  console.log("驗證合法 Token: ", authValid.authenticated === true ? "通過 (OK)" : "失敗 (FAIL)");
+  
+  const authInvalid = verifyUserAuth("test_account", "wrong_token", mockUserId);
+  console.log("驗證非法 Token: ", authInvalid.authenticated === false ? "拒絕 (OK)" : "通過 (FAIL)");
+  
+  console.log("=== 測試完成 ===");
 }
