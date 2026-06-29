@@ -698,16 +698,21 @@
       if (showLs) maxVal = Math.max(maxVal, item.lsPct);
     });
 
-    // 階梯式自適應 X 軸上限，突顯低進度時的視覺起伏
+    // 階梯式自適應 X 軸上限與等距刻度步長，突顯低進度時的視覺起伏且間距均勻
     let xAxisMax = 100;
+    let xAxisStepSize = 20;
     if (maxVal <= 10) {
       xAxisMax = 15;
+      xAxisStepSize = 3;
     } else if (maxVal <= 25) {
       xAxisMax = 30;
+      xAxisStepSize = 5;
     } else if (maxVal <= 50) {
       xAxisMax = 60;
+      xAxisStepSize = 10;
     } else {
       xAxisMax = 100;
+      xAxisStepSize = 20;
     }
 
     // 動態計算 Canvas 高度，依據勾選項數量給予不同的成員列高度，避免長條重疊
@@ -806,6 +811,7 @@
             max: xAxisMax,
             grid: { color: '#f0f0f0' },
             ticks: {
+              stepSize: xAxisStepSize,
               callback: function(value) { return value + '%'; },
               font: { size: 11 },
               color: '#666'
@@ -829,12 +835,109 @@
       return;
     }
     try {
-      const dataUrl = statsChartInstance.canvas.toDataURL('image/png');
+      // 1. 建立離屏 Canvas
+      const offscreenCanvas = document.createElement('canvas');
+      
+      const labels = statsChartInstance.config.data.labels;
+      const visibleDatasets = statsChartInstance.config.data.datasets;
+      const activeBarsCount = visibleDatasets.length;
+      
+      // 2. 計算自適應高度，並等比例拉伸寬度以鎖定橫向比例 (Width = Height * 1.4)
+      const rowHeight = activeBarsCount === 3 ? 55 : (activeBarsCount === 2 ? 45 : 35);
+      const offscreenHeight = Math.max(300, labels.length * rowHeight + 80);
+      const offscreenWidth = Math.max(800, offscreenHeight * 1.4);
+      
+      offscreenCanvas.width = offscreenWidth;
+      offscreenCanvas.height = offscreenHeight;
+      
+      const barThickness = activeBarsCount === 3 ? 12 : (activeBarsCount === 2 ? 18 : 28);
+      const datasets = visibleDatasets.map(ds => {
+        return {
+          label: ds.label,
+          data: ds.data,
+          backgroundColor: ds.backgroundColor,
+          borderColor: ds.borderColor,
+          borderWidth: ds.borderWidth,
+          barThickness: barThickness
+        };
+      });
+
+      // 3. 自訂背景插件（白色實心底）
+      const whiteBackgroundPlugin = {
+        id: 'customCanvasBackgroundColor',
+        beforeDraw: (chart) => {
+          const {ctx} = chart;
+          ctx.save();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, chart.width, chart.height);
+          ctx.restore();
+        }
+      };
+
+      // 4. 渲染臨時的離屏圖表 (關閉動畫與自適應，使其渲染於固定寬高畫布上)
+      const offscreenChart = new Chart(offscreenCanvas, {
+        type: 'bar',
+        plugins: [whiteBackgroundPlugin],
+        data: {
+          labels: labels,
+          datasets: datasets
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: false,
+          animation: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                font: { family: '"Noto Sans TC", sans-serif', size: 13, weight: 'bold' },
+                color: '#333'
+              }
+            },
+            title: {
+              display: true,
+              text: '📖 排行回顧',
+              color: '#2E7D32',
+              font: { family: '"Noto Sans TC", sans-serif', size: 18, weight: 'bold' },
+              padding: { top: 12, bottom: 18 }
+            }
+          },
+          scales: {
+            x: {
+              min: 0,
+              max: statsChartInstance.options.scales.x.max,
+              grid: { color: '#f0f0f0' },
+              ticks: {
+                stepSize: statsChartInstance.options.scales.x.ticks.stepSize,
+                callback: function(value) { return value + '%'; },
+                font: { size: 12 },
+                color: '#666'
+              }
+            },
+            y: {
+              grid: { display: false },
+              ticks: {
+                font: { family: '"Noto Sans TC", sans-serif', size: 14, weight: '500' },
+                color: '#333'
+              }
+            }
+          }
+        }
+      });
+
+      // 5. 輸出為圖片 URL 並載入
+      const dataUrl = offscreenCanvas.toDataURL('image/png');
       document.getElementById('exported-chart-img').src = dataUrl;
       document.getElementById('btn-download-img').href = dataUrl;
+      
+      // 6. 銷毀離屏 Chart 實例
+      offscreenChart.destroy();
+      
+      // 7. 顯示導出彈窗
       document.getElementById('chart-export-popup').classList.add('visible');
     } catch (e) {
       alert("圖表導出失敗: " + e.toString());
+      console.error(e);
     }
   };
 
