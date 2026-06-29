@@ -189,8 +189,7 @@
 
     // --- 初始化 ---
     function startApp() {
-      // 從 GAS template 變數取得 groupId
-      const templateGroupId = "<?= appGroupId ?>";
+      // 從 GAS template 變數取得 groupId (已由 index.html 的全域變數定義)
       groupId = (templateGroupId && templateGroupId !== "undefined" && templateGroupId !== "") ? templateGroupId.trim() : "";
 
       if (!groupId) {
