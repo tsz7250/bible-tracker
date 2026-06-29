@@ -1,0 +1,1085 @@
+  <script>
+    // --- 資料緩存與目錄 ---
+    let userId = ""; let userName = ""; let userPin = ""; let globalProgress = {};
+    let groupId = ""; // 由 URL 參數帶入，表示當前 LINE 群組
+    let currentTestament = "Plan"; let selectedBook = ""; let currentPlanDay = 1;
+    let isSavingProgress = false;
+    let isLsMode = false;
+    let currentLsItems = [];
+
+    // 靜態資料已搬移至後端，並改為 LocalStorage 快取載入
+    let lsMapping = null;
+    let YEAR_PLAN_DATA = null;
+    let BIBLE_DATA = null;
+    let OT_BOOKS_SHORT_SET = null;
+    let NT_BOOKS_SHORT_SET = null;
+    let TOTAL_OT = 0;
+    let TOTAL_NT = 0;
+    let TOTAL_PLAN = 0;
+    const TOTAL_LS_OT = 1381;
+    const TOTAL_LS_NT = 603;
+    const TOTAL_LS = TOTAL_LS_OT + TOTAL_LS_NT;
+
+    function loadStaticDataAndInit() {
+      const cached = localStorage.getItem('BIBLE_STATIC_DATA');
+      if (cached) {
+        try {
+          const data = JSON.parse(cached);
+          lsMapping = data.lsMapping;
+          YEAR_PLAN_DATA = data.YEAR_PLAN_DATA;
+          BIBLE_DATA = data.BIBLE_DATA;
+          OT_BOOKS_SHORT_SET = new Set(data.OT_BOOKS_SHORT_SET);
+          NT_BOOKS_SHORT_SET = new Set(data.NT_BOOKS_SHORT_SET);
+          
+          TOTAL_OT = BIBLE_DATA.OT.reduce((sum, b) => sum + b.c, 0);
+          TOTAL_NT = BIBLE_DATA.NT.reduce((sum, b) => sum + b.c, 0);
+          TOTAL_PLAN = YEAR_PLAN_DATA.length;
+          
+          console.log("靜態資料從 localStorage 快取載入完成");
+          startApp();
+          return;
+        } catch (e) {
+          console.warn("快取解析失敗，將重新下載", e);
+        }
+      }
+
+      // 顯示載入狀態
+      const msgEl = document.getElementById('loading-msg');
+      if (msgEl) msgEl.innerText = "下載系統資源中...";
+      
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(function(data) {
+            if (data) {
+              try {
+                localStorage.setItem('BIBLE_STATIC_DATA', JSON.stringify(data));
+                lsMapping = data.lsMapping;
+                YEAR_PLAN_DATA = data.YEAR_PLAN_DATA;
+                BIBLE_DATA = data.BIBLE_DATA;
+                OT_BOOKS_SHORT_SET = new Set(data.OT_BOOKS_SHORT_SET);
+                NT_BOOKS_SHORT_SET = new Set(data.NT_BOOKS_SHORT_SET);
+                
+                TOTAL_OT = BIBLE_DATA.OT.reduce((sum, b) => sum + b.c, 0);
+                TOTAL_NT = BIBLE_DATA.NT.reduce((sum, b) => sum + b.c, 0);
+                TOTAL_PLAN = YEAR_PLAN_DATA.length;
+                
+                console.log("靜態資料下載成功並寫入快取");
+                startApp();
+              } catch (e) {
+                console.error("快取寫入失敗", e);
+                lsMapping = data.lsMapping;
+                YEAR_PLAN_DATA = data.YEAR_PLAN_DATA;
+                BIBLE_DATA = data.BIBLE_DATA;
+                OT_BOOKS_SHORT_SET = new Set(data.OT_BOOKS_SHORT_SET);
+                NT_BOOKS_SHORT_SET = new Set(data.NT_BOOKS_SHORT_SET);
+                
+                TOTAL_OT = BIBLE_DATA.OT.reduce((sum, b) => sum + b.c, 0);
+                TOTAL_NT = BIBLE_DATA.NT.reduce((sum, b) => sum + b.c, 0);
+                TOTAL_PLAN = YEAR_PLAN_DATA.length;
+                
+                startApp();
+              }
+            } else {
+              alert("下載系統資料失敗，請重新整理頁面。");
+            }
+          })
+          .withFailureHandler(function(err) {
+            alert("連線後端失敗: " + err);
+          })
+          .getStaticBibleData();
+      } else {
+        console.warn("Google API 未載入，靜態資料初始化為空");
+        startApp();
+      }
+    }
+
+    // 重新引入前端生命讀經輔助函數 (維持 DOM 渲染正常)
+    function formatLsName(lsName) {
+      if (!lsName) return { prefix: "", num: "" };
+      if (lsName === "無") return { prefix: "無", num: "" };
+      // 解析 "創生讀26" 或 "得生讀 1" -> {prefix: "創", num: "26"}
+      const match = lsName.match(/^(.+?)生讀\s?(\d+.*)$/);
+      if (match) return { prefix: match[1], num: match[2] };
+      return { prefix: lsName, num: "" };
+    }
+
+    // Helper to extract LS from mapping
+    function getLsForRange(rangeStr) {
+      if (!rangeStr) return [];
+      // 嘗試精確匹配 (CSV 轉出的 JSON 鍵值)
+      const key = rangeStr.trim();
+      if (lsMapping.range_map[key]) return lsMapping.range_map[key];
+
+      // 模糊匹配 (處理可能的空白字元差異)
+      const normalizedKey = key.replace(/\s+/g, '');
+      for (let k in lsMapping.range_map) {
+        if (k.replace(/\s+/g, '') === normalizedKey) return lsMapping.range_map[k];
+      }
+      return [];
+    }
+
+    function renderLsSection(day) {
+      const lsWrap = document.getElementById('ls-chips-wrap');
+      const lsSection = document.getElementById('ls-section');
+      lsWrap.innerHTML = '';
+
+      const parts = YEAR_PLAN_DATA[day - 1].split(' / ');
+      const otRange = parts[0];
+      const ntRange = parts[1] || '';
+
+      const lsList = [...getLsForRange(otRange), ...getLsForRange(ntRange)];
+      const uniqueLs = Array.from(new Set(lsList)).filter(name => {
+        return name && name !== "無" && name !== "＿" && name.includes("生讀");
+      });
+
+      if (uniqueLs.length === 0) {
+        lsSection.style.display = 'none';
+        return;
+      }
+
+      lsSection.style.display = 'block';
+      const lsDoneSet = new Set(globalProgress['LifeStudy'] || []);
+
+      // 按書卷分組
+      const groups = {};
+      uniqueLs.forEach(lsName => {
+        if (!lsName || lsName === "無" || lsName === "＿" || !lsName.includes("生讀")) return;
+        const info = formatLsName(lsName);
+        if (!groups[info.prefix]) groups[info.prefix] = [];
+        groups[info.prefix].push({ name: lsName, num: info.num });
+      });
+
+      for (let prefix in groups) {
+        const groupRow = document.createElement('div');
+        groupRow.style.width = '100%';
+        groupRow.style.marginBottom = '8px';
+        groupRow.style.display = 'flex';
+        groupRow.style.flexWrap = 'wrap';
+        groupRow.style.gap = '8px';
+        groupRow.style.alignItems = 'center';
+
+        const label = document.createElement('span');
+        label.style.color = '#f39c12';
+        label.style.fontSize = '13px';
+        label.style.fontWeight = 'bold';
+        label.style.marginRight = '4px';
+        label.innerText = prefix + '：';
+        groupRow.appendChild(label);
+
+        groups[prefix].forEach(item => {
+          const chip = document.createElement('div');
+          const isDone = lsDoneSet.has(item.name);
+          chip.className = 'ls-chip' + (isDone ? ' done' : '');
+          chip.dataset.lsName = item.name;
+          chip.innerText = item.num;
+          chip.onclick = () => {
+            if (chip.classList.contains('done')) {
+              chip.classList.toggle('pending-remove');
+            } else {
+              chip.classList.toggle('selected');
+            }
+            checkPlanSave();
+          };
+          groupRow.appendChild(chip);
+        });
+        lsWrap.appendChild(groupRow);
+      }
+    }
+
+
+    // --- 初始化 ---
+    function startApp() {
+      // 從 GAS template 變數取得 groupId
+      const templateGroupId = "<?= appGroupId ?>";
+      groupId = (templateGroupId && templateGroupId !== "undefined" && templateGroupId !== "") ? templateGroupId.trim() : "";
+
+      if (!groupId) {
+        document.getElementById('loading-spinner').style.display = 'none';
+        document.getElementById('login-card').style.display = 'none';
+        const overlay = document.getElementById('login-overlay');
+        overlay.style.display = 'flex';
+        overlay.innerHTML = '<div style="text-align:center; padding:30px;"><div style="font-size:48px;">⚠️</div><div style="font-size:16px; font-weight:bold; color:#e74c3c; margin-top:12px;">連結無效</div><div style="font-size:13px; color:#666; margin-top:8px;">請透過 LINE 群組的專屬連結進入</div></div>';
+        return;
+      }
+
+      const prevGroupId = localStorage.getItem('bible_gid');
+      localStorage.setItem('bible_gid', groupId);
+      const groupChanged = prevGroupId && prevGroupId !== groupId;
+      console.log("應用程式啟動: groupId=" + groupId + ", prevGroupId=" + prevGroupId + ", groupChanged=" + groupChanged);
+
+      const pinInput = document.getElementById('pin-input');
+      if (pinInput) {
+        pinInput.addEventListener('input', function (e) {
+          this.value = this.value.replace(/[^0-9]/g, '');
+          if (this.value.length > 4) { this.value = this.value.slice(0, 4); }
+        });
+      }
+
+      const savedUid = localStorage.getItem('bible_uid');
+      const savedName = localStorage.getItem('bible_username');
+      const savedPin = localStorage.getItem('bible_pin_hash');
+      console.log("應用程式啟動: savedUid=" + savedUid + ", groupId=" + groupId);
+
+      if (savedUid && savedName && savedPin) {
+        userId = savedUid; userPin = savedPin; userName = savedName;
+        document.getElementById('display-name').innerText = userName;
+        console.log("使用已保存的登入: userId=" + userId);
+
+        // 群組已切換 → 清除憑證與快取，強制重新登入
+        if (groupChanged) {
+          console.log("群組已切換，清除登入憑證，要求重新登入");
+          localStorage.removeItem('bible_uid');
+          localStorage.removeItem('bible_username');
+          localStorage.removeItem('bible_pin_hash');
+          localStorage.removeItem('bible_progress_' + prevGroupId);
+          userId = ""; userPin = ""; userName = ""; globalProgress = {};
+          setTimeout(() => {
+            document.getElementById('loading-spinner').style.display = 'none';
+            document.getElementById('login-card').style.display = 'block';
+          }, 300);
+          return;
+        } else {
+          // 嘗試從 localStorage 載入快取進度，實現零等待
+          const cachedProgress = localStorage.getItem('bible_progress_' + groupId);
+          if (cachedProgress) {
+            try {
+              globalProgress = JSON.parse(cachedProgress);
+              console.log("已從本地快取載入進度，立即渲染");
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+              // 背景靜默同步伺服器
+              syncGlobalProgress(true);
+            } catch (e) {
+              console.error("本地快取解析失敗，改為伺服器同步", e);
+              localStorage.removeItem('bible_progress_' + groupId);
+              syncGlobalProgress(false);
+            }
+          } else {
+            syncGlobalProgress(false);
+          }
+        }
+      } else {
+        console.log("未找到已保存登入，顯示登入畫面");
+        setTimeout(() => {
+          document.getElementById('loading-spinner').style.display = 'none';
+          document.getElementById('login-card').style.display = 'block';
+        }, 300);
+      }
+    }
+
+    function saveProgressToLocal() {
+      try { localStorage.setItem('bible_progress_' + groupId, JSON.stringify(globalProgress)); }
+      catch (e) { console.warn("localStorage 寫入失敗", e); }
+    }
+
+    function syncGlobalProgress(silent) {
+      const currentUserId = userId;
+      if (!silent) {
+        document.getElementById('loading-msg').innerText = "進度同步中...";
+      }
+      console.log("開始同步進度: userId=" + userId + ", groupId=" + groupId + ", silent=" + silent);
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(data => {
+            if (userId !== currentUserId) { console.log("帳號已切換，丟棄舊資料"); return; }
+            if (data && data.__error) { console.error("進度讀取失敗: " + data.message); if (!silent) globalProgress = {}; }
+            else { globalProgress = data || {}; saveProgressToLocal(); }
+            console.log("進度同步完成", globalProgress);
+            if (!silent) {
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+            } else {
+              // 靜默同步完成，重新渲染當前視圖
+              if (currentTestament === 'Plan') renderPlanGrid();
+              else renderBookList();
+            }
+          })
+          .withFailureHandler(err => {
+            if (userId !== currentUserId) { console.log("帳號已切換，丟棄舊錯誤"); return; }
+            console.error("進度同步失敗", err);
+            if (!silent) {
+              document.getElementById('login-overlay').style.display = 'none';
+              switchTestament('Plan');
+            }
+          })
+          .getAllUserProgress(userId, userName, userPin, groupId);
+      } else {
+        if (!silent) {
+          document.getElementById('login-overlay').style.display = 'none';
+          switchTestament('Plan');
+        }
+      }
+    }
+
+    function handleLogin() {
+      const n = document.getElementById('username-input').value.trim();
+      const p = document.getElementById('pin-input').value.trim();
+      console.log("登入嘗試: name=" + n + ", pin=" + p);
+      if (!n || p.length !== 4) { return showToast("請輸入姓名與4位密碼"); }
+
+      document.getElementById('login-card').style.display = 'none';
+      document.getElementById('loading-spinner').style.display = 'block';
+      document.getElementById('loading-msg').innerText = "驗證中...";
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(result => {
+            if (result && result.success) {
+              userId = result.userId; userPin = p; userName = n;
+              localStorage.setItem('bible_uid', userId);
+              localStorage.setItem('bible_username', userName);
+              localStorage.setItem('bible_pin_hash', p);
+              console.log("登入成功: userId=" + userId);
+              document.getElementById('display-name').innerText = userName;
+              syncGlobalProgress();
+            } else {
+              document.getElementById('login-card').style.display = 'block';
+              document.getElementById('loading-spinner').style.display = 'none';
+              showToast(result && result.message ? result.message : "登入失敗");
+              console.log("登入失敗: " + (result ? result.message : "未知錯誤"));
+            }
+          })
+          .withFailureHandler(err => {
+            document.getElementById('login-card').style.display = 'block';
+            document.getElementById('loading-spinner').style.display = 'none';
+            showToast("登入錯誤: " + err);
+            console.error("登入呼叫失敗", err);
+          })
+          .authenticateUser(n, p);
+      } else {
+        userId = n + "_" + p; userPin = p; userName = n;
+        localStorage.setItem('bible_uid', userId);
+        localStorage.setItem('bible_username', userName);
+        localStorage.setItem('bible_pin_hash', p);
+        document.getElementById('display-name').innerText = userName;
+        syncGlobalProgress();
+      }
+    }
+
+    function handleLogout() {
+      showConfirm("登出會回到登入畫面，確定嗎？", function () {
+        localStorage.removeItem('bible_uid');
+        localStorage.removeItem('bible_username');
+        localStorage.removeItem('bible_pin_hash');
+        localStorage.removeItem('bible_progress_' + groupId);
+        userId = ""; userPin = ""; userName = ""; globalProgress = {};
+        console.log("已登出");
+        document.getElementById('username-input').value = '';
+        document.getElementById('pin-input').value = '';
+        document.getElementById('loading-spinner').style.display = 'none';
+        document.getElementById('login-card').style.display = 'block';
+        document.getElementById('login-overlay').style.display = 'flex';
+      });
+    }
+
+    // --- 視圖控制 ---
+    function switchTestament(type) {
+      currentTestament = type;
+      ['OT', 'NT', 'Plan', 'LS'].forEach(t => document.getElementById('tab-' + t).classList.toggle('active', t === type));
+      if (type === 'Plan') {
+        document.getElementById('tab-content-books').style.display = 'none';
+        document.getElementById('tab-content-plan').style.display = 'block';
+        document.getElementById('tab-content-ls').style.display = 'none';
+        renderPlanGrid();
+      } else if (type === 'LS') {
+        document.getElementById('tab-content-books').style.display = 'none';
+        document.getElementById('tab-content-plan').style.display = 'none';
+        document.getElementById('tab-content-ls').style.display = 'block';
+        renderLsBookList();
+      } else {
+        document.getElementById('tab-content-plan').style.display = 'none';
+        document.getElementById('tab-content-ls').style.display = 'none';
+        document.getElementById('tab-content-books').style.display = 'flex';
+        renderBookList();
+      }
+    }
+
+    function closeToMain() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-main').classList.add('active');
+      if (currentTestament === 'Plan') renderPlanGrid();
+      else if (currentTestament === 'LS') renderLsBookList();
+      else renderBookList();
+    }
+
+    function openMorePage() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-clear').classList.add('active');
+    }
+
+    function toggleStatsInfo() {
+      document.getElementById('stats-info-popup').classList.toggle('visible');
+    }
+
+    function closeStatsInfo() {
+      document.getElementById('stats-info-popup').classList.remove('visible');
+    }
+
+    function toggleGuidePopup() {
+      document.getElementById('guide-popup').classList.toggle('visible');
+    }
+
+    function closeGuidePopup() {
+      document.getElementById('guide-popup').classList.remove('visible');
+    }
+
+    function openMembersStats() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-stats').classList.add('active');
+
+      const container = document.getElementById('stats-list-container');
+      container.innerHTML = '<div style="text-align:center; padding: 30px;"><div class="spinner"></div><div style="margin-top:10px; color:#666; font-size:14px;">載入中...</div></div>';
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler(renderMembersStats)
+          .withFailureHandler(err => {
+            container.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">載入失敗: ${err}</div>`;
+          })
+          .getGroupMemberStats(groupId, userId, userName, userPin);
+      } else {
+        setTimeout(() => {
+          renderMembersStats({
+            status: 'success',
+            members: [
+              { username: '測試用戶A', source: 'plan', planDays: 100, otChapters: 256, ntChapters: 72, lsOT: 50, lsNT: 20 },
+              { username: '測試用戶B', source: 'free', otChapters: 120, ntChapters: 50, lsOT: 10, lsNT: 5 },
+            ],
+            totalOT: 929, totalNT: 260
+          });
+        }, 500);
+      }
+    }
+
+    function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function renderMembersStats(data) {
+      const container = document.getElementById('stats-list-container');
+      if (!data || data.status === 'error') {
+        container.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">${data?.message || '載入失敗'}</div>`;
+        return;
+      }
+
+      const members = data.members || [];
+      const tOT = data.totalOT || 929;
+      const tNT = data.totalNT || 260;
+      members.sort((a, b) => (b.otChapters + b.ntChapters) - (a.otChapters + a.ntChapters));
+
+      if (members.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:#888; padding: 20px;">目前無成員資料</div>';
+        return;
+      }
+
+      const pct = (d, t) => t === 0 ? 0 : parseFloat(((d / t) * 100).toFixed(1));
+
+      let html = '';
+      members.forEach((m, idx) => {
+        const otPct = pct(m.otChapters, tOT);
+        const ntPct = pct(m.ntChapters, tNT);
+
+        html += `
+        <div class="stat-card">
+          <div class="stat-header">
+            <div class="stat-name">${idx + 1}. ${escapeHtml(m.username)}</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>📜 舊約</span><span>${otPct}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${otPct}%"></div></div>
+            <div class="stat-total">${m.otChapters} / ${tOT} 章</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>📖 新約</span><span>${ntPct}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${ntPct}%; background:#2196F3;"></div></div>
+            <div class="stat-total">${m.ntChapters} / ${tNT} 章</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>✨ 舊約生命讀經</span><span>${pct(m.lsOT || 0, TOTAL_LS_OT)}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${pct(m.lsOT || 0, TOTAL_LS_OT)}%; background:#f39c12;"></div></div>
+            <div class="stat-total">${m.lsOT || 0} / ${TOTAL_LS_OT} 篇</div>
+          </div>
+          <div class="stat-progress-section">
+            <div class="stat-progress-label"><span>✨ 新約生命讀經</span><span>${pct(m.lsNT || 0, TOTAL_LS_NT)}%</span></div>
+            <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${pct(m.lsNT || 0, TOTAL_LS_NT)}%; background:#2196F3;"></div></div>
+            <div class="stat-total">${m.lsNT || 0} / ${TOTAL_LS_NT} 篇</div>
+          </div>
+        </div>
+      `;
+      });
+
+      container.innerHTML = html;
+    }
+
+    // --- 渲染邏輯 ---
+    function renderBookList() {
+      const list = document.getElementById('tab-content-books');
+      list.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      BIBLE_DATA[currentTestament].forEach((book, index) => {
+        const done = globalProgress[book.n] ? globalProgress[book.n].length : 0;
+        const pct = (done / book.c) * 100;
+        const row = document.createElement('div');
+        row.className = 'book-row';
+        row.onclick = () => openNormalBook(book.n, book.c);
+        row.innerHTML = `
+        <div class="book-row-main">
+          <div class="book-row-left"><span class="book-number">${index + 1}</span><span class="book-name">${book.n}</span></div>
+          <div class="book-row-right">${done === book.c ? '完成' : done + ' / ' + book.c} ❯</div>
+        </div>
+        <div class="mini-progress-bg"><div class="mini-progress-fill" style="width:${pct}%"></div></div>`;
+        frag.appendChild(row);
+      });
+      list.appendChild(frag);
+    }
+
+    function openNormalBook(name, count) {
+      isLsMode = false;
+      selectedBook = name; document.getElementById('current-book-name').innerText = name;
+      document.getElementById('view-main').classList.remove('active');
+      document.getElementById('view-chapters').classList.add('active');
+      const grid = document.getElementById('chapter-grid'); grid.innerHTML = '';
+      const doneSet = new Set(globalProgress[name] || []);
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i <= count; i++) {
+        const box = document.createElement('div'); box.className = 'chapter-box' +
+          (doneSet.has(i.toString()) ? ' already-done' : ''); box.innerText = i; box.dataset.chapter = i.toString();
+        box.onclick = function () {
+          if (this.classList.contains('already-done')) {
+            this.classList.toggle('pending-remove');
+          } else {
+            this.classList.toggle('selected');
+          }
+        };
+        frag.appendChild(box);
+      }
+      grid.appendChild(frag);
+    }
+
+    function renderPlanGrid() {
+      const grid = document.getElementById('plan-grid');
+      grid.innerHTML = '';
+      const doneSet = new Set(globalProgress['一年讀經'] || []);
+      let firstIncomp = 1; let found = false;
+      const frag = document.createDocumentFragment();
+      for (let i = 1; i <= TOTAL_PLAN; i++) {
+        const o = doneSet.has(i + '_OT'), n = doneSet.has(i + '_NT');
+        let st = o && n ? 'status-2' : (o || n ? 'status-1' : 'status-0');
+        if (!found && st !== 'status-2') { firstIncomp = i; found = true; }
+        const cell = document.createElement('div'); cell.className = `plan-cell ${st}`; cell.id = `plan-cell-${i}`; cell.innerText = i;
+        cell.onclick = () => selectPlanDay(i);
+        frag.appendChild(cell);
+      }
+      grid.appendChild(frag);
+      if (currentPlanDay === 1 && found) currentPlanDay = firstIncomp;
+      selectPlanDay(currentPlanDay);
+    }
+
+    function selectPlanDay(day) {
+      if (day < 1 || day > TOTAL_PLAN) return; currentPlanDay = day;
+      document.querySelectorAll('.plan-cell').forEach(el => el.classList.remove('active-day'));
+      document.getElementById(`plan-cell-${day}`).classList.add('active-day');
+      document.getElementById('p-day-title').innerText = `第 ${day} 天`;
+      const parts = YEAR_PLAN_DATA[day - 1].split(' / ');
+      document.getElementById('pt-ot-ref').innerText = parts[0];
+      document.getElementById('pt-nt-ref').innerText = parts[1] || '';
+      const doneSet = new Set(globalProgress['一年讀經'] || []);
+      const o = doneSet.has(day + '_OT'), n = doneSet.has(day + '_NT');
+      document.getElementById('pt-ot-row').className = 'plan-task-row' + (o ? ' done' : '');
+      document.getElementById('pt-nt-row').className = 'plan-task-row' + (n ? ' done' : '');
+      document.getElementById('pt-ot-check').innerText = o ? '✓' : '';
+      document.getElementById('pt-nt-check').innerText = n ? '✓' : '';
+      renderLsSection(day);
+      checkPlanSave();
+    }
+
+    const BOOK_NAME_TO_ABBR = {
+      "創世記": "創", "出埃及記": "出", "利未記": "利", "民數記": "民", "申命記": "申",
+      "約書亞記": "書", "士師記": "士", "路得記": "得", "撒母耳記上": "撒上", "撒母耳記下": "撒下",
+      "列王紀上": "王上", "列王紀下": "王下", "歷代志上": "代上", "歷代志下": "代下",
+      "以斯拉記": "拉", "尼希米記": "尼", "以斯帖記": "斯", "約伯記": "伯", "詩篇": "詩",
+      "箴言": "箴", "傳道書": "傳", "雅歌": "歌", "以賽亞書": "賽", "耶利米書": "耶",
+      "耶利米哀歌": "哀", "以西結書": "結", "但以理書": "但", "何西阿書": "何", "約珥書": "珥",
+      "阿摩司書": "摩", "俄巴底亞書": "俄", "約拿書": "拿", "彌迦書": "彌", "那鴻書": "鴻",
+      "哈巴谷書": "哈", "西番雅書": "番", "哈該書": "該", "撒加利亞書": "亞", "瑪拉基書": "瑪",
+      "馬太福音": "太", "馬可福音": "可", "路加福音": "路", "約翰福音": "約", "使徒行傳": "徒",
+      "羅馬書": "羅", "哥林多前書": "林前", "哥林多後書": "林後", "加拉太書": "加", "以弗所書": "弗",
+      "腓立比書": "腓", "歌羅西書": "西", "帖撒羅尼迦前書": "帖前", "帖撒羅尼迦後書": "帖後",
+      "提摩太前書": "提前", "提摩太後書": "提後", "提多書": "多", "腓利門書": "門", "希伯來書": "希",
+      "雅各書": "雅", "彼得前書": "彼前", "彼得後書": "彼後", "約翰一書": "約壹", "約翰二書": "約貳",
+      "約翰三書": "約參", "猶大書": "猶", "啟示錄": "啟"
+    };
+
+    function renderLsBookList() {
+      const list = document.getElementById('tab-content-ls');
+      if (!list) return;
+      list.innerHTML = '';
+
+      const lsDoneSet = new Set(globalProgress['LifeStudy'] || []);
+      const books = [...BIBLE_DATA.OT, ...BIBLE_DATA.NT];
+      const frag = document.createDocumentFragment();
+
+      let countIndex = 1;
+      books.forEach(book => {
+        const bookName = book.n;
+        const abbr = BOOK_NAME_TO_ABBR[bookName];
+        if (!abbr) return;
+
+        let lsItems = [];
+        for (let range in lsMapping.range_map) {
+          if (range.startsWith(abbr)) {
+            lsItems.push(...lsMapping.range_map[range]);
+          }
+        }
+        if (lsMapping.unhooked[bookName]) {
+          lsItems.push(...lsMapping.unhooked[bookName]);
+        }
+
+        if (lsItems.length === 0) return;
+
+        const uniqueItems = Array.from(new Set(lsItems))
+          .filter(item => item && item !== "無" && item !== "＿" && item.includes("生讀"))
+          .sort((a, b) => {
+            const na = parseInt(a.match(/\d+/) || 0);
+            const nb = parseInt(b.match(/\d+/) || 0);
+            return na - nb;
+          });
+
+        if (uniqueItems.length === 0) return;
+
+        const done = uniqueItems.filter(item => lsDoneSet.has(item)).length;
+        const total = uniqueItems.length;
+        const pct = (done / total) * 100;
+
+        const row = document.createElement('div');
+        row.className = 'book-row';
+        row.onclick = () => openLsBook(bookName, uniqueItems);
+        row.innerHTML = `
+        <div class="book-row-main">
+          <div class="book-row-left"><span class="book-number">${countIndex++}</span><span class="book-name">${bookName} 生命讀經</span></div>
+          <div class="book-row-right">${done === total ? '完成' : done + ' / ' + total} ❯</div>
+        </div>
+        <div class="mini-progress-bg"><div class="mini-progress-fill" style="width:${pct}%"></div></div>`;
+        frag.appendChild(row);
+      });
+      list.appendChild(frag);
+    }
+
+    function openLsBook(bookName, uniqueItems) {
+      isLsMode = true;
+      selectedBook = bookName;
+      currentLsItems = uniqueItems;
+
+      document.getElementById('current-book-name').innerText = `${bookName} 生命讀經`;
+      document.getElementById('view-main').classList.remove('active');
+      document.getElementById('view-chapters').classList.add('active');
+
+      const grid = document.getElementById('chapter-grid');
+      grid.innerHTML = '';
+
+      const lsDoneSet = new Set(globalProgress['LifeStudy'] || []);
+      const frag = document.createDocumentFragment();
+
+      uniqueItems.forEach(item => {
+        const info = formatLsName(item);
+        const box = document.createElement('div');
+        box.className = 'chapter-box' + (lsDoneSet.has(item) ? ' already-done' : '');
+        box.innerText = info.num;
+        box.dataset.lsName = item;
+        box.onclick = function () {
+          if (this.classList.contains('already-done')) {
+            this.classList.toggle('pending-remove');
+          } else {
+            this.classList.toggle('selected');
+          }
+        };
+        frag.appendChild(box);
+      });
+      grid.appendChild(frag);
+    }
+
+    function togglePlanTask(t) {
+      const r = document.getElementById(`pt-${t}-row`);
+      if (r.classList.contains('done')) {
+        r.classList.toggle('pending-remove');
+      } else {
+        r.classList.toggle('selected');
+      }
+      const isSelected = r.classList.contains('selected');
+      const isPendingRemove = r.classList.contains('pending-remove');
+      document.getElementById(`pt-${t}-check`).innerText = (isSelected || (r.classList.contains('done') && !isPendingRemove)) ? '✓' : '';
+      checkPlanSave();
+    }
+
+    function checkPlanSave() {
+      const s = document.querySelectorAll('.plan-task-row.selected, .plan-task-row.pending-remove').length > 0 ||
+        document.querySelectorAll('#ls-chips-wrap .ls-chip.selected, #ls-chips-wrap .ls-chip.pending-remove').length > 0;
+      document.getElementById('plan-save-btn').style.display = s ? 'block' : 'none';
+    }
+
+    function savePlanProgress() {
+      let addedPlan = [], removedPlan = [];
+      const otRow = document.getElementById('pt-ot-row');
+      const ntRow = document.getElementById('pt-nt-row');
+
+      if (otRow.classList.contains('selected')) addedPlan.push(currentPlanDay + '_OT');
+      if (otRow.classList.contains('pending-remove')) removedPlan.push(currentPlanDay + '_OT');
+
+      if (ntRow.classList.contains('selected')) addedPlan.push(currentPlanDay + '_NT');
+      if (ntRow.classList.contains('pending-remove')) removedPlan.push(currentPlanDay + '_NT');
+
+      let addedLS = Array.from(document.querySelectorAll('#ls-chips-wrap .ls-chip.selected')).map(c => c.dataset.lsName);
+      let removedLS = Array.from(document.querySelectorAll('#ls-chips-wrap .ls-chip.pending-remove')).map(c => c.dataset.lsName);
+
+      const finishSave = () => {
+        selectPlanDay(currentPlanDay);
+        renderPlanGrid();
+      };
+
+      const hasPlanChange = addedPlan.length > 0 || removedPlan.length > 0;
+      const hasLsChange = addedLS.length > 0 || removedLS.length > 0;
+
+      if (hasPlanChange && hasLsChange) {
+        executeSave('一年讀經', addedPlan, removedPlan, (prevResult) => {
+          executeSave('LifeStudy', addedLS, removedLS, finishSave, true, prevResult);
+        }, false);
+      } else if (hasPlanChange) {
+        executeSave('一年讀經', addedPlan, removedPlan, finishSave);
+      } else if (hasLsChange) {
+        executeSave('LifeStudy', addedLS, removedLS, finishSave);
+      }
+    }
+
+    function submitNormalProgress() {
+      if (isLsMode) {
+        const added = Array.from(document.querySelectorAll('#chapter-grid .chapter-box.selected')).map(b => b.dataset.lsName);
+        const removed = Array.from(document.querySelectorAll('#chapter-grid .chapter-box.pending-remove')).map(b => b.dataset.lsName);
+
+        if (!added.length && !removed.length) return showAlert("請點選章節");
+        executeSave('LifeStudy', added, removed, () => {
+          openLsBook(selectedBook, currentLsItems);
+        });
+      } else {
+        const added = Array.from(document.querySelectorAll('#chapter-grid .chapter-box.selected')).map(b => b.dataset.chapter.trim());
+        const removed = Array.from(document.querySelectorAll('#chapter-grid .chapter-box.pending-remove')).map(b => b.dataset.chapter.trim());
+
+        if (!added.length && !removed.length) return showAlert("請點選章節");
+        executeSave(selectedBook, added, removed, () => {
+          const book = BIBLE_DATA[currentTestament === 'OT' ? 'OT' : 'NT'].find(b => b.n === selectedBook);
+          if (book) openNormalBook(book.n, book.c);
+        });
+      }
+    }
+
+    // --- 操作載入 modal 輔助函式 ---
+    function showOpLoading(msg) {
+      const modal = document.getElementById('op-loading-modal');
+      const spinner = modal.querySelector('.spinner');
+      const closeBtn = document.getElementById('op-loading-close');
+      if (spinner) spinner.style.display = 'block';
+      if (closeBtn) closeBtn.style.display = 'none';
+      document.getElementById('op-loading-msg').innerText = msg || '處理中...';
+      modal.classList.add('visible');
+    }
+
+    function hideOpLoading() {
+      document.getElementById('op-loading-modal').classList.remove('visible');
+    }
+
+    function showOpSuccess(msg, cb) {
+      const modal = document.getElementById('op-loading-modal');
+      const spinner = modal.querySelector('.spinner');
+      const closeBtn = document.getElementById('op-loading-close');
+      if (spinner) spinner.style.display = 'none';
+      if (closeBtn) closeBtn.style.display = 'none';
+      document.getElementById('op-loading-msg').innerText = msg || '完成';
+      setTimeout(() => {
+        hideOpLoading();
+        if (cb) cb();
+      }, 1000);
+    }
+
+    function showOpFailure(msg, cb) {
+      const modal = document.getElementById('op-loading-modal');
+      const spinner = modal.querySelector('.spinner');
+      const closeBtn = document.getElementById('op-loading-close');
+      if (spinner) spinner.style.display = 'none';
+      document.getElementById('op-loading-msg').innerText = msg || '發生錯誤';
+      if (closeBtn) {
+        closeBtn.style.display = 'inline-block';
+        closeBtn.onclick = function () {
+          hideOpLoading();
+          if (cb) cb();
+        };
+      }
+    }
+
+    // --- 清除進度功能 ---
+    function confirmClear(type, label) {
+      if (!userId) {
+        showToast("錯誤: 用戶ID為空");
+        return;
+      }
+      showConfirm(`確定要清除您的「${label}」嗎？\n此動作將永久刪除伺服器上的紀錄！`, function () {
+        if (typeof google === 'undefined') {
+          showToast("Google API 未載入");
+          return;
+        }
+
+        showOpLoading(`正在清除${label}...`);
+
+        google.script.run
+          .withSuccessHandler(function (result) {
+            if (result && result.status === 'error') {
+              showOpFailure('清除失敗: ' + (result.message || '未知錯誤'));
+              return;
+            }
+            // 清除成功後重新同步進度
+            google.script.run
+              .withSuccessHandler(function (data) {
+                globalProgress = (!data || data.__error) ? {} : data;
+                saveProgressToLocal();
+                showOpSuccess(`${label}已成功清除!`, function () {
+                  if (currentTestament === 'Plan') renderPlanGrid();
+                  else if (currentTestament === 'LS') renderLsBookList();
+                  else renderBookList();
+                });
+              })
+              .withFailureHandler(function (err) {
+                showOpFailure('同步失敗: ' + err);
+              })
+              .getAllUserProgress(userId, userName, userPin, groupId);
+          })
+          .withFailureHandler(function (err) {
+            showOpFailure('清除失敗: ' + err);
+          })
+          .clearUserProgress(userId, userName, userPin, type, groupId);
+      }, true);
+    }
+
+    function showConfirm(message, onConfirm, isDanger) {
+      const modal = document.getElementById('custom-modal');
+      document.getElementById('custom-modal-msg').innerText = message;
+      const cancelBtn = document.getElementById('custom-modal-cancel');
+      const okBtn = document.getElementById('custom-modal-ok');
+      cancelBtn.style.display = '';
+      okBtn.className = 'custom-modal-ok' + (isDanger ? ' danger' : '');
+      modal.classList.add('visible');
+      okBtn.onclick = () => { modal.classList.remove('visible'); onConfirm(); };
+      cancelBtn.onclick = () => { modal.classList.remove('visible'); };
+    }
+
+    function showAlert(message) {
+      const modal = document.getElementById('custom-modal');
+      document.getElementById('custom-modal-msg').innerText = message;
+      const cancelBtn = document.getElementById('custom-modal-cancel');
+      const okBtn = document.getElementById('custom-modal-ok');
+      cancelBtn.style.display = 'none';
+      okBtn.className = 'custom-modal-ok';
+      modal.classList.add('visible');
+      okBtn.onclick = () => { modal.classList.remove('visible'); };
+    }
+
+    function showToast(message) {
+      let toastContainer = document.getElementById('toast-container');
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.style.cssText = 'position:fixed;bottom:120px;left:10px;right:10px;z-index:10001;max-width:calc(100% - 20px);';
+        document.body.appendChild(toastContainer);
+      }
+
+      // 限制最多顯示 3 個 toast，移除最舊的
+      while (toastContainer.children.length >= 3) {
+        toastContainer.removeChild(toastContainer.firstChild);
+      }
+
+      const toast = document.createElement('div');
+      toast.style.cssText = 'background:#2c3e50;color:white;padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:8px;word-wrap:break-word;box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+      toast.innerText = message;
+      toastContainer.appendChild(toast);
+
+      console.log("💬 Toast: " + message);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    function setSaveUiState(isSaving) {
+      isSavingProgress = isSaving;
+      const planSaveBtn = document.getElementById('plan-save-btn');
+      const normalSaveBtn = document.querySelector('.save-btn');
+
+      if (planSaveBtn) {
+        planSaveBtn.disabled = isSaving;
+        planSaveBtn.style.opacity = isSaving ? '0.65' : '1';
+        planSaveBtn.style.cursor = isSaving ? 'not-allowed' : 'pointer';
+      }
+
+      if (normalSaveBtn) {
+        normalSaveBtn.disabled = isSaving;
+        normalSaveBtn.style.opacity = isSaving ? '0.65' : '1';
+        normalSaveBtn.style.cursor = isSaving ? 'not-allowed' : 'pointer';
+      }
+
+      if (isSaving) {
+        showOpLoading('儲存中...');
+      } else {
+        hideOpLoading();
+      }
+    }
+
+    // --- 共用儲存 ---
+    function executeSave(bName, added, removed, cb, showSuccessMsg = true, initialCounts = null) {
+      if (isSavingProgress) {
+        showToast('儲存中，請稍候...');
+        return;
+      }
+
+      const safeAdded = Array.from(new Set((added || []).map(c => String(c).trim()).filter(Boolean)));
+      const safeRemoved = Array.from(new Set((removed || []).map(c => String(c).trim()).filter(Boolean)));
+
+      if (!bName || (safeAdded.length === 0 && safeRemoved.length === 0)) return;
+
+      setSaveUiState(true);
+
+      // 樂觀更新進度緩存
+      const oldProgress = [...(globalProgress[bName] || [])];
+      if (!globalProgress[bName]) globalProgress[bName] = [];
+
+      // 移除
+      if (safeRemoved.length > 0) {
+        const removedSet = new Set(safeRemoved);
+        globalProgress[bName] = globalProgress[bName].filter(c => !removedSet.has(c));
+      }
+      // 新增
+      if (safeAdded.length > 0) {
+        const existingSet = new Set(globalProgress[bName]);
+        safeAdded.forEach(c => {
+          if (!existingSet.has(c)) globalProgress[bName].push(c);
+        });
+      }
+
+      if (typeof google !== 'undefined') {
+        google.script.run
+          .withSuccessHandler((result) => {
+            console.log("syncProgress 回應:", result);
+
+            if (result && result.status === "error") {
+              // 伺服器失敗，回滾記憶體狀態
+              globalProgress[bName] = oldProgress;
+              showOpFailure('同步失敗: ' + (result.message || '未知錯誤'), () => {
+                setSaveUiState(false);
+              });
+              return;
+            }
+
+            // 伺服器確認成功，才寫入 localStorage
+            saveProgressToLocal();
+
+            if (showSuccessMsg) {
+              const totalAdded = (result.addedCount || 0) + (initialCounts?.addedCount || 0);
+              const totalRemoved = (result.removedCount || 0) + (initialCounts?.removedCount || 0);
+
+              let msg = "";
+              if (totalAdded && totalRemoved) msg = `已同步 (新增 ${totalAdded}, 移除 ${totalRemoved})`;
+              else if (totalAdded) msg = `已新增 ${totalAdded} 筆`;
+              else if (totalRemoved) msg = `已移除 ${totalRemoved} 筆`;
+              else msg = "已同步完成";
+
+              showOpSuccess(msg, () => {
+                setSaveUiState(false);
+                if (cb) cb();
+              });
+            } else {
+              isSavingProgress = false; // 暫時設為 false，允許下一個序列儲存呼叫
+              if (cb) cb(result);
+            }
+          })
+          .withFailureHandler((err) => {
+            // 伺服器失敗，回滾
+            globalProgress[bName] = oldProgress;
+            showOpFailure('同步失敗: ' + err, () => {
+              setSaveUiState(false);
+            });
+          })
+          .syncProgress({
+            userId, groupId, username: userName, pin: userPin,
+            book: bName,
+            addedChapters: safeAdded,
+            removedChapters: safeRemoved
+          });
+      } else {
+        if (cb) cb();
+        setSaveUiState(false);
+      }
+    }
+
+    function openProgressView() {
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-progress').classList.add('active');
+
+      // 計算逐卷章節進度
+      let otChaptersDone = 0;
+      let ntChaptersDone = 0;
+      BIBLE_DATA.OT.forEach(book => { otChaptersDone += (globalProgress[book.n]?.length || 0); });
+      BIBLE_DATA.NT.forEach(book => { ntChaptersDone += (globalProgress[book.n]?.length || 0); });
+
+      // 計算一年讀經進度
+      const planDoneSet = new Set(globalProgress['一年讀經'] || []);
+      let planOtDone = 0;
+      let planNtDone = 0;
+      for (let day = 1; day <= TOTAL_PLAN; day++) {
+        if (planDoneSet.has(day + '_OT')) planOtDone++;
+        if (planDoneSet.has(day + '_NT')) planNtDone++;
+      }
+      // 百分比輔助函式
+      const calcPct = (done, total) => total === 0 ? 0 : parseFloat(((done / total) * 100).toFixed(2));
+      const otPct = calcPct(otChaptersDone, TOTAL_OT);
+      const ntPct = calcPct(ntChaptersDone, TOTAL_NT);
+      const planOtPct = calcPct(planOtDone, TOTAL_PLAN);
+      const planNtPct = calcPct(planNtDone, TOTAL_PLAN);
+
+      // 更新 UI
+      document.getElementById('pct-ot').innerText = otPct + '%';
+      document.getElementById('bar-ot').style.width = otPct + '%';
+      document.getElementById('txt-ot').innerText = `${otChaptersDone} / ${TOTAL_OT} 章`;
+
+      document.getElementById('pct-nt').innerText = ntPct + '%';
+      document.getElementById('bar-nt').style.width = ntPct + '%';
+      document.getElementById('txt-nt').innerText = `${ntChaptersDone} / ${TOTAL_NT} 章`;
+
+      document.getElementById('pct-plan-ot').innerText = planOtPct + '%';
+      document.getElementById('bar-plan-ot').style.width = planOtPct + '%';
+      document.getElementById('txt-plan-ot').innerText = `${planOtDone} / ${TOTAL_PLAN} 天`;
+
+      document.getElementById('pct-plan-nt').innerText = planNtPct + '%';
+      document.getElementById('bar-plan-nt').style.width = planNtPct + '%';
+      document.getElementById('txt-plan-nt').innerText = `${planNtDone} / ${TOTAL_PLAN} 天`;
+
+      // 生命讀經進度 (分割新舊約)
+      const lsDoneList = globalProgress['LifeStudy'] || [];
+      let lsOTDone = 0;
+      let lsNTDone = 0;
+      lsDoneList.forEach(item => {
+        const info = formatLsName(item);
+        if (OT_BOOKS_SHORT_SET.has(info.prefix)) lsOTDone++;
+        else if (NT_BOOKS_SHORT_SET.has(info.prefix)) lsNTDone++;
+      });
+
+      const lsOTPct = calcPct(lsOTDone, TOTAL_LS_OT);
+      const lsNTPct = calcPct(lsNTDone, TOTAL_LS_NT);
+
+      document.getElementById('pct-ls-ot').innerText = lsOTPct + '%';
+      document.getElementById('bar-ls-ot').style.width = lsOTPct + '%';
+      document.getElementById('txt-ls-ot').innerText = `${lsOTDone} / ${TOTAL_LS_OT} 篇`;
+
+      document.getElementById('pct-ls-nt').innerText = lsNTPct + '%';
+      document.getElementById('bar-ls-nt').style.width = lsNTPct + '%';
+      document.getElementById('txt-ls-nt').innerText = `${lsNTDone} / ${TOTAL_LS_NT} 篇`;
+    }
+
+
+    window.onload = loadStaticDataAndInit;
+  </script>

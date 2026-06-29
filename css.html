@@ -1,0 +1,938 @@
+  <style>
+    /* 全域變數與基底 */
+    :root {
+      --primary: #4CAF50;
+      --secondary: #2E7D32;
+      --bg: #f5f7f9;
+      --text: #333;
+      --done: #e8f5e9;
+      --border: #e0e0e0;
+      --danger: #e74c3c;
+    }
+
+    body {
+      font-family: -apple-system, "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      margin: 0;
+      color: var(--text);
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* 頂部導航列 */
+    .header {
+      background: white;
+      padding: 12px 15px;
+      display: flex;
+      align-items: center;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      gap: 8px;
+    }
+
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #eee;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .user-name {
+      font-weight: bold;
+      flex-grow: 1;
+      font-size: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .header-btn {
+      font-size: 11px;
+      color: #555;
+      background: #f0f0f0;
+      padding: 5px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid #ddd;
+      font-weight: bold;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    /* 視圖容器與動畫 */
+    .view-container {
+      display: none;
+      width: 100%;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .view-container.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    /* 頁籤 */
+    .tabs {
+      display: flex;
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 56px;
+      z-index: 90;
+    }
+
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 12px 5px;
+      font-weight: bold;
+      cursor: pointer;
+      color: #888;
+      transition: 0.2s;
+      font-size: 14px;
+    }
+
+    .tab.active {
+      color: var(--primary);
+      border-bottom: 3px solid var(--primary);
+    }
+
+    /* 書卷列表 */
+    .vertical-book-list {
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 20px;
+    }
+
+    .book-row {
+      display: flex;
+      flex-direction: column;
+      padding: 12px 15px;
+      background: white;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      gap: 6px;
+    }
+
+    .book-row:active {
+      background: #f9f9f9;
+    }
+
+    .book-row-main {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+
+    .book-row-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .book-row-right {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+      color: #888;
+    }
+
+    .book-number {
+      color: #aaa;
+      font-size: 13px;
+      width: 20px;
+      text-align: right;
+    }
+
+    .book-name {
+      font-weight: bold;
+      font-size: 15px;
+    }
+
+    .mini-progress-bg {
+      width: 100%;
+      height: 4px;
+      background: #eee;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .mini-progress-fill {
+      height: 100%;
+      background: var(--primary);
+      transition: width 0.5s ease;
+    }
+
+    /* 章節選擇 */
+    .chapter-nav {
+      display: flex;
+      align-items: center;
+      padding: 12px 15px;
+      background: white;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 56px;
+      z-index: 90;
+    }
+
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--primary);
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .current-book-title {
+      font-size: 16px;
+      font-weight: bold;
+      flex-grow: 1;
+      text-align: center;
+      padding-right: 40px;
+    }
+
+    .chapter-content {
+      padding: 15px;
+      padding-bottom: 100px;
+    }
+
+    .chapter-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+
+    .chapter-box {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .chapter-box.already-done {
+      background: var(--done);
+      color: var(--secondary);
+      border-color: var(--done);
+    }
+
+    .chapter-box.selected {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+      transform: scale(0.92);
+    }
+
+    /* 一年讀經計畫 */
+    .plan-top-panel {
+      background: #2c3e50;
+      color: white;
+      padding: 8px 15px;
+      position: sticky;
+      top: 102px;
+      z-index: 80;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .plan-day-nav {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .plan-task-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #34495e;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: 0.15s;
+      border: 1.5px solid transparent;
+    }
+
+    .plan-task-row.done {
+      background: var(--primary);
+      opacity: 0.9;
+      cursor: default;
+    }
+
+    .plan-task-row.selected {
+      background: #f39c12;
+      border-color: #f1c40f;
+    }
+
+    .pt-info {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .pt-title {
+      font-size: 10px;
+      color: #bdc3c7;
+      font-weight: bold;
+    }
+
+    .pt-ref {
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .pt-checkbox {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid #7f8c8d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: bold;
+    }
+
+    .plan-task-row.done .pt-checkbox,
+    .plan-task-row.selected .pt-checkbox {
+      border-color: white;
+      color: white;
+    }
+
+    .plan-save-btn {
+      width: 100%;
+      background: white;
+      color: #2c3e50;
+      border: none;
+      padding: 6px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 4px;
+      display: none;
+    }
+
+    .plan-grid-wrap {
+      padding: 10px 12px 120px 12px;
+      background: white;
+    }
+
+    .plan-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+    }
+
+    .plan-cell {
+      aspect-ratio: 1;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: bold;
+      color: #777;
+      cursor: pointer;
+    }
+
+    .plan-cell.status-1 {
+      background: #e8f5e9;
+      border: 1.5px solid var(--primary);
+      color: var(--primary);
+    }
+
+    .plan-cell.status-2 {
+      background: var(--primary);
+      border: 1.5px solid var(--primary);
+      color: white;
+    }
+
+    .plan-cell.active-day {
+      outline: 2.5px solid #f39c12;
+      outline-offset: 1px;
+      z-index: 2;
+      transform: scale(1.05);
+    }
+
+    /* 總進度 */
+    .progress-content {
+      padding: 15px;
+    }
+
+    .progress-card {
+      background: white;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+      border: 1px solid var(--border);
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: bold;
+      font-size: 15px;
+      margin-bottom: 10px;
+    }
+
+    .pct-text {
+      color: var(--primary);
+      font-size: 16px;
+    }
+
+    .progress-bar-bg {
+      background: #eee;
+      height: 10px;
+      border-radius: 5px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      background: linear-gradient(90deg, #81C784, #4CAF50);
+      height: 100%;
+      width: 0%;
+      transition: width 0.8s ease;
+    }
+
+    /* 清除設定 */
+    .clear-card {
+      background: white;
+      border-radius: 12px;
+      margin-bottom: 15px;
+      padding: 5px 0;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .clear-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 20px;
+      border-bottom: 1px solid #f5f5f5;
+      cursor: pointer;
+    }
+
+    .clear-item:last-child {
+      border-bottom: none;
+    }
+
+    .clear-item:active {
+      background: #fff5f5;
+    }
+
+    .clear-label {
+      font-weight: bold;
+      color: #444;
+    }
+
+    .clear-btn-text {
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* 登入畫面 */
+    .login-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    .login-card {
+      background: white;
+      padding: 25px;
+      border-radius: 15px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      width: 85%;
+      max-width: 320px;
+      text-align: center;
+    }
+
+    .login-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 16px;
+      box-sizing: border-box;
+      background: #fafafa;
+      text-align: center;
+      margin-bottom: 15px;
+    }
+
+    .login-btn {
+      width: 100%;
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid var(--primary);
+      border-radius: 50%;
+      width: 35px;
+      height: 35px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* 底部按鈕列 */
+    .footer {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      padding: 15px 20px;
+      background: white;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+      box-sizing: border-box;
+      z-index: 100;
+      padding-bottom: calc(15px + env(safe-area-inset-bottom));
+    }
+
+    .save-btn {
+      width: 100%;
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 15px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    /* 操作載入 Modal */
+    .op-loading-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+    }
+
+    .op-loading-modal.visible {
+      display: flex;
+    }
+
+    .op-loading-box {
+      background: white;
+      padding: 28px 36px;
+      border-radius: 16px;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      min-width: 160px;
+    }
+
+    .op-loading-msg {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #555;
+      font-weight: bold;
+    }
+
+    /* 確認對話框 */
+    .custom-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    .custom-modal-overlay.visible {
+      display: flex;
+    }
+
+    .custom-modal-box {
+      background: white;
+      border-radius: 16px;
+      width: 85%;
+      max-width: 320px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      animation: fadeIn 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .custom-modal-msg {
+      font-size: 15px;
+      color: #333;
+      line-height: 1.6;
+      margin: 24px;
+      white-space: pre-line;
+    }
+
+    .custom-modal-btns {
+      display: flex;
+      gap: 10px;
+      padding: 0 24px 24px 24px;
+    }
+
+    .custom-modal-cancel {
+      flex: 1;
+      padding: 11px;
+      border: 1px solid #ddd;
+      background: #f5f5f5;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: bold;
+      color: #666;
+      cursor: pointer;
+    }
+
+    .custom-modal-ok {
+      flex: 1;
+      padding: 11px;
+      border: none;
+      background: var(--primary);
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: bold;
+      color: white;
+      cursor: pointer;
+    }
+
+    .custom-modal-ok.danger {
+      background: var(--danger);
+    }
+
+
+    /* 統計頁面 */
+    .stat-card {
+      background: white;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+      border: 1px solid var(--border);
+    }
+
+    .stat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .stat-name {
+      font-weight: bold;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .stat-tag {
+      font-size: 11px;
+      background: #FFF3E0;
+      color: #E65100;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-weight: bold;
+    }
+
+    .stat-progress-section {
+      margin-bottom: 8px;
+    }
+
+    .stat-progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .stat-progress-label span:first-child {
+      color: #555;
+    }
+
+    .stat-progress-label span:last-child {
+      color: var(--primary);
+      font-weight: bold;
+    }
+
+    .stat-total {
+      display: flex;
+      justify-content: flex-end;
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    /* 統計說明彈窗 */
+    .info-btn {
+      background: none;
+      border: none;
+      width: 28px;
+      height: 28px;
+      font-size: 15px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      flex-shrink: 0;
+    }
+
+    .info-btn:active {
+      background: #f0f0f0;
+    }
+
+    .info-popup-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    .info-popup-overlay.visible {
+      display: flex;
+    }
+
+    .info-popup-box {
+      background: white;
+      border-radius: 16px;
+      padding: 22px;
+      width: 90%;
+      max-width: 380px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+      animation: fadeIn 0.2s ease;
+    }
+
+    .info-popup-title {
+      font-size: 17px;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .info-popup-section {
+      margin-bottom: 12px;
+    }
+
+    .info-popup-section h4 {
+      font-size: 14px;
+      color: var(--primary);
+      margin: 0 0 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .info-popup-section p {
+      font-size: 13px;
+      color: #555;
+      line-height: 1.65;
+      margin: 0;
+    }
+
+    .info-popup-section ul {
+      font-size: 13px;
+      color: #555;
+      line-height: 1.65;
+      margin: 6px 0 0;
+      padding-left: 18px;
+    }
+
+    .info-popup-section li {
+      margin-bottom: 4px;
+    }
+
+    .info-popup-divider {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 12px 0;
+    }
+
+    .info-popup-close {
+      width: 100%;
+      padding: 11px;
+      border: none;
+      background: var(--primary);
+      color: white;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+
+    /* 生命讀經專屬樣式 */
+    .ls-section {
+      background: #1a252f;
+      padding: 10px 15px;
+      margin: 8px 0;
+      border-radius: 12px;
+      border: 1px solid #34495e;
+    }
+
+    .ls-title {
+      font-size: 11px;
+      color: #95a5a6;
+      font-weight: bold;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .ls-chips-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .ls-chip {
+      background: #2c3e50;
+      color: #ecf0f1;
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 13px;
+      font-weight: bold;
+      border: 1.5px solid #455a64;
+      cursor: pointer;
+      transition: 0.2s;
+      position: relative;
+    }
+
+    .ls-chip:active {
+      transform: scale(0.9);
+    }
+
+    .ls-chip.done {
+      background: var(--primary);
+      border-color: var(--secondary);
+      color: white;
+    }
+
+    .ls-chip.selected {
+      background: #f39c12;
+      border-color: #f1c40f;
+      color: white;
+    }
+
+    /* 待移除樣式 */
+    .chapter-box.pending-remove,
+    .ls-chip.pending-remove {
+      background: #ffebee !important;
+      color: #c62828 !important;
+      border: 2px dashed #ef5350 !important;
+      transform: scale(0.95);
+    }
+
+    .plan-task-row.pending-remove {
+      background: #c62828 !important;
+      border: 2px dashed #ffcdd2 !important;
+      opacity: 0.8;
+    }
+
+    /* 生命讀經各卷書進度條 */
+    .ls-book-content {
+      display: none;
+      padding: 12px;
+      background: #fafafa;
+    }
+
+    .ls-book-content.active {
+      display: block;
+    }
+
+    .op-loading-close {
+      display: none;
+      margin-top: 15px;
+      padding: 8px 20px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .op-loading-close:active {
+      opacity: 0.8;
+    }
+  </style>
