@@ -7,6 +7,9 @@
   let isSavingProgress = false;
   let isLsMode = false;
   let currentLsItems = [];
+  let currentStatsData = null;
+  let statsMode = 'list';
+  let statsChartInstance = null;
 
   async function hashPin(pin) {
     const encoder = new TextEncoder();
@@ -492,8 +495,17 @@
     document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
     document.getElementById('view-stats').classList.add('active');
 
+    // 預設切換至列表模式，或維持上次設定
+    switchStatsMode(statsMode);
+
     const container = document.getElementById('stats-list-container');
     container.innerHTML = '<div style="text-align:center; padding: 30px;"><div class="spinner"></div><div style="margin-top:10px; color:#666; font-size:14px;">載入中...</div></div>';
+
+    if (statsChartInstance) {
+      statsChartInstance.destroy();
+      statsChartInstance = null;
+    }
+    currentStatsData = null;
 
     if (typeof google !== 'undefined') {
       google.script.run
@@ -507,8 +519,10 @@
         renderMembersStats({
           status: 'success',
           members: [
-            { username: '測試用戶A', source: 'plan', planDays: 100, otChapters: 256, ntChapters: 72, lsOT: 50, lsNT: 20 },
-            { username: '測試用戶B', source: 'free', otChapters: 120, ntChapters: 50, lsOT: 10, lsNT: 5 },
+            { username: '測試用戶A', source: 'plan', planDays: 100, otChapters: 256, ntChapters: 72, lsOT: 500, lsNT: 200 },
+            { username: '測試用戶B', source: 'free', otChapters: 120, ntChapters: 50, lsOT: 100, lsNT: 50 },
+            { username: '測試用戶C', source: 'free', otChapters: 800, ntChapters: 200, lsOT: 1000, lsNT: 400 },
+            { username: '測試用戶D', source: 'plan', planDays: 50, otChapters: 400, ntChapters: 150, lsOT: 600, lsNT: 300 },
           ],
           totalOT: 929, totalNT: 260
         });
@@ -519,6 +533,8 @@
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
   function renderMembersStats(data) {
+    currentStatsData = data;
+    
     const container = document.getElementById('stats-list-container');
     if (!data || data.status === 'error') {
       container.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">${data?.message || '載入失敗'}</div>`;
@@ -528,9 +544,11 @@
     const members = data.members || [];
     const tOT = data.totalOT || 929;
     const tNT = data.totalNT || 260;
-    members.sort((a, b) => (b.otChapters + b.ntChapters) - (a.otChapters + a.ntChapters));
+    
+    // 列表模式預設以聖經進度排序
+    const sortedMembers = [...members].sort((a, b) => (b.otChapters + b.ntChapters) - (a.otChapters + a.ntChapters));
 
-    if (members.length === 0) {
+    if (sortedMembers.length === 0) {
       container.innerHTML = '<div style="text-align:center; color:#888; padding: 20px;">目前無成員資料</div>';
       return;
     }
@@ -538,7 +556,7 @@
     const pct = (d, t) => t === 0 ? 0 : parseFloat(((d / t) * 100).toFixed(1));
 
     let html = '';
-    members.forEach((m, idx) => {
+    sortedMembers.forEach((m, idx) => {
       const otPct = pct(m.otChapters, tOT);
       const ntPct = pct(m.ntChapters, tNT);
 
@@ -572,7 +590,257 @@
     });
 
     container.innerHTML = html;
+
+    // 若處於圖表模式，則重繪圖表
+    if (statsMode === 'chart') {
+      renderStatsChart(data);
+    }
   }
+
+  // --- 圖表相關邏輯 ---
+  window.switchStatsMode = function(mode) {
+    statsMode = mode;
+    const tabList = document.getElementById('stats-tab-list');
+    const tabChart = document.getElementById('stats-tab-chart');
+    const listView = document.getElementById('stats-list-view');
+    const chartView = document.getElementById('stats-chart-view');
+
+    if (mode === 'list') {
+      tabList.classList.add('active');
+      tabChart.classList.remove('active');
+      listView.style.display = 'block';
+      chartView.style.display = 'none';
+    } else {
+      tabList.classList.remove('active');
+      tabChart.classList.add('active');
+      listView.style.display = 'none';
+      chartView.style.display = 'block';
+      if (currentStatsData) {
+        renderStatsChart(currentStatsData);
+      }
+    }
+  };
+
+  window.onChartConfigChange = function() {
+    if (currentStatsData) {
+      renderStatsChart(currentStatsData);
+    }
+  };
+
+  window.renderStatsChart = function(data) {
+    const showOT = document.getElementById('chk-chart-ot').checked;
+    const showNT = document.getElementById('chk-chart-nt').checked;
+    const showLs = document.getElementById('chk-chart-ls').checked;
+    const range = document.getElementById('sel-chart-range').value;
+    const wrapper = document.getElementById('chart-canvas-wrapper');
+
+    if (statsChartInstance) {
+      statsChartInstance.destroy();
+      statsChartInstance = null;
+    }
+
+    if (!showOT && !showNT && !showLs) {
+      wrapper.innerHTML = '<canvas id="stats-chart"></canvas><div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#888; font-size:14px; text-align:center; width:100%;">⚠️ 請至少選取一項統計項目</div>';
+      return;
+    }
+
+    wrapper.innerHTML = '<canvas id="stats-chart"></canvas>';
+    const canvas = document.getElementById('stats-chart');
+
+    const members = data.members || [];
+    const tOT = data.totalOT || 929;
+    const tNT = data.totalNT || 260;
+    const totalLs = TOTAL_LS_OT + TOTAL_LS_NT;
+
+    const calcPct = (d, t) => t === 0 ? 0 : parseFloat(((d / t) * 100).toFixed(1));
+
+    // 計算百分比與排序權重
+    const processed = members.map(m => {
+      const otPct = calcPct(m.otChapters, tOT);
+      const ntPct = calcPct(m.ntChapters, tNT);
+      const lsPct = calcPct((m.lsOT || 0) + (m.lsNT || 0), totalLs);
+      
+      let sum = 0;
+      let count = 0;
+      if (showOT) { sum += otPct; count++; }
+      if (showNT) { sum += ntPct; count++; }
+      if (showLs) { sum += lsPct; count++; }
+      const sortValue = count > 0 ? (sum / count) : 0;
+
+      return {
+        username: m.username,
+        otPct: otPct,
+        ntPct: ntPct,
+        lsPct: lsPct,
+        sortValue: sortValue
+      };
+    });
+
+    // 依據計算的排序權重由大到小排序
+    processed.sort((a, b) => b.sortValue - a.sortValue);
+
+    // 篩選 Top N
+    let displayed = processed;
+    if (range !== 'all') {
+      const limit = parseInt(range, 10);
+      displayed = processed.slice(0, limit);
+    }
+
+    if (displayed.length === 0) {
+      return;
+    }
+
+    // 找出當前顯示資料中的最高百分比值以決定自適應上限
+    let maxVal = 0;
+    displayed.forEach(item => {
+      if (showOT) maxVal = Math.max(maxVal, item.otPct);
+      if (showNT) maxVal = Math.max(maxVal, item.ntPct);
+      if (showLs) maxVal = Math.max(maxVal, item.lsPct);
+    });
+
+    // 階梯式自適應 X 軸上限，突顯低進度時的視覺起伏
+    let xAxisMax = 100;
+    if (maxVal <= 10) {
+      xAxisMax = 15;
+    } else if (maxVal <= 25) {
+      xAxisMax = 30;
+    } else if (maxVal <= 50) {
+      xAxisMax = 60;
+    } else {
+      xAxisMax = 100;
+    }
+
+    // 動態計算 Canvas 高度，依據勾選項數量給予不同的成員列高度，避免長條重疊
+    const activeBarsCount = (showOT ? 1 : 0) + (showNT ? 1 : 0) + (showLs ? 1 : 0);
+    const rowHeight = activeBarsCount === 3 ? 55 : (activeBarsCount === 2 ? 45 : 35);
+    const dynamicHeight = Math.max(300, displayed.length * rowHeight + 80);
+    canvas.style.height = dynamicHeight + 'px';
+    canvas.height = dynamicHeight;
+
+    const labels = displayed.map(item => item.username);
+    const datasets = [];
+    const barThickness = activeBarsCount === 3 ? 9 : (activeBarsCount === 2 ? 13 : 20);
+
+    if (showOT) {
+      datasets.push({
+        label: '📜 舊約進度 (%)',
+        data: displayed.map(item => item.otPct),
+        backgroundColor: 'rgba(76, 175, 80, 0.85)',
+        borderColor: '#4CAF50',
+        borderWidth: 1,
+        barThickness: barThickness
+      });
+    }
+
+    if (showNT) {
+      datasets.push({
+        label: '📖 新約進度 (%)',
+        data: displayed.map(item => item.ntPct),
+        backgroundColor: 'rgba(33, 150, 243, 0.85)',
+        borderColor: '#2196F3',
+        borderWidth: 1,
+        barThickness: barThickness
+      });
+    }
+
+    if (showLs) {
+      datasets.push({
+        label: '✨ 生命讀經 (%)',
+        data: displayed.map(item => item.lsPct),
+        backgroundColor: 'rgba(255, 152, 0, 0.85)',
+        borderColor: '#FF9800',
+        borderWidth: 1,
+        barThickness: barThickness
+      });
+    }
+
+    // 自訂背景插件以確保圖片導出有白色底色
+    const whiteBackgroundPlugin = {
+      id: 'customCanvasBackgroundColor',
+      beforeDraw: (chart) => {
+        const {ctx} = chart;
+        ctx.save();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, chart.width, chart.height);
+        ctx.restore();
+      }
+    };
+
+    statsChartInstance = new Chart(canvas, {
+      type: 'bar',
+      plugins: [whiteBackgroundPlugin],
+      data: {
+        labels: labels,
+        datasets: datasets
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              font: { family: '"Noto Sans TC", sans-serif', size: 12, weight: 'bold' },
+              color: '#333'
+            }
+          },
+          title: {
+            display: true,
+            text: '📖 排行回顧',
+            color: '#2E7D32',
+            font: { family: '"Noto Sans TC", sans-serif', size: 16, weight: 'bold' },
+            padding: { top: 10, bottom: 15 }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return ` ${context.dataset.label.split(' ')[0]} ${context.raw}%`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            min: 0,
+            max: xAxisMax,
+            grid: { color: '#f0f0f0' },
+            ticks: {
+              callback: function(value) { return value + '%'; },
+              font: { size: 11 },
+              color: '#666'
+            }
+          },
+          y: {
+            grid: { display: false },
+            ticks: {
+              font: { family: '"Noto Sans TC", sans-serif', size: 13, weight: '500' },
+              color: '#333'
+            }
+          }
+        }
+      }
+    });
+  };
+
+  window.exportStatsChart = function() {
+    if (!statsChartInstance) {
+      alert("目前無可導出的圖表。");
+      return;
+    }
+    try {
+      const dataUrl = statsChartInstance.canvas.toDataURL('image/png');
+      document.getElementById('exported-chart-img').src = dataUrl;
+      document.getElementById('btn-download-img').href = dataUrl;
+      document.getElementById('chart-export-popup').classList.add('visible');
+    } catch (e) {
+      alert("圖表導出失敗: " + e.toString());
+    }
+  };
+
+  window.closeChartExport = function() {
+    document.getElementById('chart-export-popup').classList.remove('visible');
+  };
 
   // --- 渲染邏輯 ---
   function renderBookList() {

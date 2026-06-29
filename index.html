@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>讀經進度紀錄</title>
   <?!= HtmlService.createHtmlOutputFromFile('css').getContent(); ?>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     const templateGroupId = "<?= appGroupId ?>";
   </script>
@@ -28,7 +29,8 @@
       <input type="password" id="pin-confirm-input" class="login-input" placeholder="請再次輸入密碼" style="display:none;">
       <button id="login-btn" class="login-btn" onclick="handleLogin()">進入系統</button>
       <div style="text-align:center; margin-top:12px;">
-        <a id="toggle-mode-link" href="#" style="font-size:13px; color:var(--secondary); text-decoration:none;" onclick="toggleLoginMode(); return false;">📝 我要註冊</a>
+        <a id="toggle-mode-link" href="#" style="font-size:13px; color:var(--secondary); text-decoration:none;"
+          onclick="toggleLoginMode(); return false;">📝 我要註冊</a>
       </div>
     </div>
   </div>
@@ -134,7 +136,7 @@
         <div style="font-size:12px; color:#888; text-align:right; margin-top:5px;" id="txt-nt">...</div>
       </div>
       <div class="progress-card">
-        <div class="progress-header" style="margin-bottom: 12px;"><span>🗓️ 一年讀經計畫</span></div>
+        <div class="progress-header" style="margin-bottom: 12px;"><span>🗓️ 一年讀經一遍</span></div>
         <div style="margin-bottom: 12px;">
           <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
             <span>舊約</span><span class="pct-text" id="pct-plan-ot">0%</span>
@@ -185,8 +187,58 @@
       <button class="info-btn" onclick="toggleStatsInfo()" title="計算說明">ℹ️</button>
     </div>
     <div style="padding: 15px;">
-      <p style="font-size: 13px; color: #888; margin-bottom: 15px; line-height: 1.4;">📊 顯示群組成員的新舊約閱讀進度</p>
-      <div id="stats-list-container"></div>
+      <!-- 統計模式切換 Tab -->
+      <div class="stats-mode-tabs">
+        <div id="stats-tab-list" class="stats-mode-tab active" onclick="switchStatsMode('list')">👥 列表模式</div>
+        <div id="stats-tab-chart" class="stats-mode-tab" onclick="switchStatsMode('chart')">📊 圖表模式</div>
+      </div>
+
+      <!-- 列表模式容器 -->
+      <div id="stats-list-view">
+        <p style="font-size: 13px; color: #888; margin-bottom: 15px; line-height: 1.4;">📊 顯示群組成員的新舊約閱讀進度</p>
+        <div id="stats-list-container"></div>
+      </div>
+
+      <!-- 圖表模式容器 -->
+      <div id="stats-chart-view" style="display: none;">
+        <!-- 圖表篩選與控制面板 -->
+        <div class="stats-controls">
+          <div class="stats-checkboxes">
+            <label class="stats-checkbox-label">
+              <input type="checkbox" id="chk-chart-ot" checked onchange="onChartConfigChange()">
+              <span>📜 舊約</span>
+            </label>
+            <label class="stats-checkbox-label">
+              <input type="checkbox" id="chk-chart-nt" checked onchange="onChartConfigChange()">
+              <span>📖 新約</span>
+            </label>
+            <label class="stats-checkbox-label">
+              <input type="checkbox" id="chk-chart-ls" checked onchange="onChartConfigChange()">
+              <span>✨ 生命讀經</span>
+            </label>
+          </div>
+          <div class="stats-select-wrapper">
+            <span style="font-size:12px; color:#666;">顯示範圍：</span>
+            <select id="sel-chart-range" class="stats-select" onchange="onChartConfigChange()">
+              <option value="all">顯示全部成員</option>
+              <option value="10">前 10 名 (Top 10)</option>
+              <option value="20">前 20 名 (Top 20)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 圖表畫布滾動外框 -->
+        <div class="chart-scroll-container">
+          <div id="chart-canvas-wrapper">
+            <canvas id="stats-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- 導出按鈕 -->
+        <div style="margin-top: 15px; text-align: center;">
+          <button class="export-btn" onclick="exportStatsChart()">📷 匯出統計圖表</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -200,7 +252,34 @@
       </div>
       <div class="info-popup-section">
         <p>一年讀經打卡會自動轉換為對應的聖經章節，並與自由讀經的章節合併計算，防止重複計算。</p>
-        <p style="margin-top:8px;">因此無論使用新舊約自由讀經或一年讀經計畫，都能準確顯示各人的閱讀進度。</p>
+        <p style="margin-top:8px;">因此無論使用新舊約自由讀經或一年讀經一遍，都能準確顯示各人的閱讀進度。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 圖表匯出彈窗 -->
+  <div id="chart-export-popup" class="info-popup-overlay" onclick="if(event.target===this)closeChartExport()">
+    <div class="info-popup-box" style="max-width: 90%; width: 500px;">
+      <div class="info-popup-title">
+        <span>📷 匯出統計圖表</span>
+        <button onclick="closeChartExport()"
+          style="margin-left:auto; background:none; border:none; font-size:20px; color:#999; cursor:pointer; padding:0 2px; line-height:1;">✕</button>
+      </div>
+      <div class="info-popup-section" style="text-align: center; padding: 10px 0;">
+        <p style="font-size: 13px; color: #555; margin-bottom: 12px; line-height: 1.4;">
+          💡 行動裝置可<b>長按圖片</b>複製或直接儲存分享到 LINE 群組！
+        </p>
+        <div
+          style="border: 1px solid #ddd; border-radius: 6px; padding: 8px; background: #fff; max-height: 50vh; overflow-y: auto;">
+          <img id="exported-chart-img"
+            style="max-width: 100%; height: auto; display: block; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+            alt="匯出的統計圖表">
+        </div>
+        <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center;">
+          <a id="btn-download-img" class="export-btn"
+            style="text-decoration: none; line-height: 20px; display: inline-block;" download="讀經進度統計圖表.png">💾 下載圖片</a>
+          <button class="back-btn" style="margin: 0; padding: 8px 16px;" onclick="closeChartExport()">關閉</button>
+        </div>
       </div>
     </div>
   </div>
@@ -231,7 +310,7 @@
           <span class="clear-label">清除新約進度</span>
           <span class="clear-btn-text">🗑️ 清除</span>
         </div>
-        <div class="clear-item" onclick="confirmClear('Plan', '一年讀經計畫')">
+        <div class="clear-item" onclick="confirmClear('Plan', '一年讀經一遍')">
           <span class="clear-label">清除一年讀經進度</span>
           <span class="clear-btn-text">🗑️ 清除</span>
         </div>
@@ -275,7 +354,7 @@
       <hr class="info-popup-divider">
 
       <div class="info-popup-section">
-        <h4>🗓️ 一年讀經計畫</h4>
+        <h4>🗓️ 一年讀經一遍</h4>
         <p>選擇「一年讀經」頁籤，點選天數後勾選該日進度，按「儲存目前勾選」。綠色格子表示該天已完成。下方會自動顯示該日進度對應的生命讀經篇目。</p>
       </div>
       <hr class="info-popup-divider">
